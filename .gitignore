@@ -5,3 +5,9 @@
 interop-report*.txt
 startup-report*.txt
 *.dll
+
+*.log
+house-rules-probe*.txt
+hero-health-probe*.txt
+core-probe*.txt
+gameplay-probe*.txt

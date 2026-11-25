@@ -1,5 +1,7 @@
-# v0.4.8 alpha validation
+# v0.5.0 alpha validation
 
-Based on the v0.4.7 report: configured +3, existing cap 3, zero refunds, 32 elevated-cap spend skips. Refund mode now honors explicit existing-cap opt-in and subtracts existing AP above the normal allowance from the refund budget. At cap 3 and +3, two verified one-point refunds target five actions; at cap 2 and +3, three refunds target five. No max setter is invoked by this path. Existing exact hook signatures and solo/build gates remain unchanged. Same-cap verification and a cap lock guard against mid-cycle cap changes. A cap above target is not lowered, and a zero bonus is read-only.
+AP: v0.4.8 +3 refund mode was confirmed in gameplay and diagnostics (17 refunds, 8 resets, zero errors; multiple five-spend sequences). AP budget implementation is unchanged. Early turn endings and copied state remain limitations.
 
-32 cap/bonus/opt-in cases checked using an equivalent JavaScript simulation; standalone C# tests updated but not compiled or executed here. Native stat copies, partial/early turn endings, loaded save behavior, and actual five-action usability remain unverified. Use disposable solo adventures only.
+Health: checked supplied generated Jade.GameModel.dll metadata for Health=2, StatModifier constructor 2004011185C00C1185AC1185B0, AdditionAndSubtraction=0, Temporary=0, Stat.AddModifier 2001011282F8, raw max/modifiers getters and Piece usesHealth/IsDowned. This verifies signatures, not native behavior. Health defaults to 100%, samples read-only, and requires verified full, unmodified health. Temporary modifier only; no direct current/max setter. Attempts are bounded by native identity; no retry after loss or failure. Native modifier persistence and actual HP effect remain unverified. Use fresh disposable solo adventures.
+
+Pure integer health targets and guards have standalone C# tests; equivalent arithmetic was checked outside the game. No C# compilation or in-game testing of v0.5.0 has been performed here.

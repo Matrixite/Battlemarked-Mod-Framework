@@ -1,4 +1,14 @@
-# Battlemarked Mod Framework (BMF) — v0.4.8-alpha
+# Battlemarked Mod Framework (BMF) — v0.5.0-alpha
+
+## New in v0.5.0 — experimental hero maximum health
+
+The v0.4.8 +3 AP refund mode was confirmed by the user: 17 refunds, eight budget resets, five paid one-point actions on multiple tracked objects, and no reported framework errors. Its calculation is retained.
+
+F10 > House rules > **Hero health** offers 100% (default), 125%, 150%, 175% and 200%. Changes require restarting. The first health alpha attempts a native temporary additive health modifier on the first verified AP observation of a full-health, non-downed local solo hero with a consistent unmodified health stat. It rounds the target upward (10 HP at 150% becomes 15 max HP). It does not directly set current health or permanent maximum; the game decides how its native modifier affects current HP. One attempt per native health stat object per process, with no retry if the modifier disappears. Previously modified, injured or unverified states are skipped. If the native effect is not verified, further health writes stop independently of AP.
+
+Use a fresh disposable solo adventure, start at 150%, move each hero once and inspect the displayed HP. Take damage, advance a round, and upload hero-health-probe.txt from the same module data folder as house-rules-probe.txt, plus LogOutput.log. This version is not verified for save persistence, modifier refresh or actual health behavior. 100% is read-only and does not remove a previously applied modifier; no blanket modifier removal is attempted. Do not use a valuable save.
+
+The health metadata signatures and enum members were checked against the supplied generated Jade.GameModel assembly. Standalone health and AP test cases are included but require local .NET compilation.
 
 ## New in v0.4.8 — existing AP caps in refund mode
 

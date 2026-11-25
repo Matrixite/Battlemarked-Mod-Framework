@@ -50,3 +50,19 @@ Check(!ApRefundBudget.CanReset(true, 3, true), "duplicate full refill does not r
 Check(!ApRefundBudget.CanReset(false, 0, true), "unverified empty does not reset");
 Check(!ApRefundBudget.CanReset(true, 0, false), "unverified full does not reset");
 Console.WriteLine("PASS: 32 AP refund cap/bonus/opt-in combinations and guard scenarios.");
+
+foreach (int hp in new[] { 1, 3, 7, 10, 11, 30, 10000 })
+foreach (int percent in new[] { 100, 125, 150, 175, 200 })
+{
+    int expected = (int)Math.Ceiling(hp * (double)percent / 100);
+    Check(HealthBudget.Target(hp, percent) == expected, "health target round up");
+    Check(HealthBudget.CanApply(percent, hp, hp, hp, hp, hp, hp, 0) == (percent > 100), "health default and full baseline");
+}
+Check(HealthBudget.Target(0, 200) == 0 && HealthBudget.Target(10001, 200) == 0, "health bounds");
+Check(HealthBudget.Target(10, 999) == 10, "invalid setting fail closed");
+Check(!HealthBudget.CanApply(150, 8, 10, 8, 10, 10, 10, 0), "injured excluded");
+Check(!HealthBudget.CanApply(150, 15, 15, 15, 15, 10, 10, 1), "existing modifier excluded");
+Check(!HealthBudget.CanApply(150, 10, 10, 10, 10, 10, 10, -1), "unknown modifiers excluded");
+Check(!HealthBudget.CanApply(150, 10, 10, 10, 10, 10, 10, 1), "existing modifier even when net zero excluded");
+Check(!HealthBudget.CanApply(150, 10, 10, 10.5f, 10, 10, 10, 0), "fractional mismatch excluded");
+Console.WriteLine("PASS: health target and conservative baseline guards.");

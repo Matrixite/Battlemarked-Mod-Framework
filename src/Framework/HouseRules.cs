@@ -11,6 +11,12 @@ internal sealed class HouseRules : BattlemarkedModule
     public override string Id => "org.battlemarked.houserules";
     public override string Name => "House rules (extra hero AP)";
     private ModuleContext ctx;
+    private HeroHealthRule health;
+    internal static int NextHealthPercent => running?.health?.NextPercent ?? 100;
+    internal static bool CanConfigureHealth => running?.health?.Available ?? false;
+    internal static string HealthStatus => running?.health?.Status ?? "Health rule unavailable";
+    internal static string HealthCounts => running?.health?.Counts ?? "No health observations";
+    internal static void ChangeHealthPercent(int delta) => running?.health?.ChangePercent(delta);
     private static HouseRules running;
     private static object model;
     private MethodInfo solo, local, multi, inGame, playing, host, activeHero, localHero, sheet, allowance, remaining;
@@ -144,6 +150,8 @@ internal sealed class HouseRules : BattlemarkedModule
                 if (pointer == null || pointer.PropertyType != typeof(IntPtr) || !pointer.CanRead || statPointer == null || statPointer.PropertyType != typeof(IntPtr) || !statPointer.CanRead) throw new InvalidOperationException("Native pointer unavailable");
             }
             catch (Exception ex) { setStat = setMax = null; pointer = statPointer = null; bonus = 0; ctx.Log.LogWarning("AP trial unavailable; read-only diagnostics: " + ex.Message); }
+            try { health = new HeroHealthRule(ctx, piece, facade, stat, enumType); }
+            catch (Exception ex) { ctx.Log.LogWarning("Health rule unavailable: " + ex.Message); }
             var teardown = Exact(hero, "TearDown", "200001");
             running = this; model = null;
             foreach (var method in new[] { solo, local, playing }) ctx.Patches.Patch(method, postfix: Hook(nameof(Capture)));
@@ -229,6 +237,12 @@ internal sealed class HouseRules : BattlemarkedModule
         try
         {
             if (r.Scope(piece) != "local solo hero") { r.skipped++; return null; }
+            // Health has its own fault handling and never changes the AP budget.
+            if (r.health != null && r.health.Available)
+            {
+                r.writing++;
+                try { r.health.Observe(piece); } finally { r.writing--; }
+            }
             var h = r.Identify(piece);
             if (!isSpend && h != null && h.PendingRestore && r.Remaining(piece) <= 2)
                 r.RestoreMaximum(piece, h, r.Remaining(piece));
@@ -430,7 +444,7 @@ internal sealed class HouseRules : BattlemarkedModule
     private void Fail(string stage, Exception ex)
     { faulted = true; errors++; status = "Tracing stopped: " + stage; Sample(status + " | " + ex.GetType().Name); ctx.Log.LogWarning(status + ": " + ex.Message); }
     public override void OnSceneChanged(SceneInfo info) { LoseScope("scene changed"); scene = info.Name; model = null; dirty = true; }
-    public override void OnUpdate() { if (dirty && (DateTime.UtcNow - lastWrite).TotalSeconds >= 5) Write(); }
+    public override void OnUpdate() { if (dirty && (DateTime.UtcNow - lastWrite).TotalSeconds >= 5) Write(); health?.Tick(); }
     private void Write()
     {
         if (ctx == null) return;
@@ -443,5 +457,5 @@ internal sealed class HouseRules : BattlemarkedModule
         }
         catch (Exception ex) { ctx.Log.LogWarning("House rules report: " + ex.Message); }
     }
-    public override void OnStop() { LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); }
+    public override void OnStop() { LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); health?.Write(); }
 }

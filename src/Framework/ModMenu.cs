@@ -20,7 +20,7 @@ internal sealed class ModMenu
     private readonly ConfigEntry<bool> enabled;
     private bool open, broken, guiSeen, usingPolling;
     private int page;
-    private bool diagnostics, houseRules;
+    private bool diagnostics, houseRules, healthPage;
     private string message = "Settings apply on next launch.";
     private Func<bool> poll;
     private bool inputChecked;
@@ -87,7 +87,27 @@ internal sealed class ModMenu
             if (GUI.Button(new Rect(x + 288, y + 58, 130, 26), "House rules")) { diagnostics = false; houseRules = true; }
             if (houseRules)
             {
-                GUI.Label(new Rect(x + 12, y + 92, width - 24, 24), "Extra hero action points (experimental, solo only)");
+                if (healthPage)
+                {
+                    GUI.Label(new Rect(x + 12, y + 92, width - 145, 24), "Hero maximum health (experimental, solo)");
+                    if (GUI.Button(new Rect(x + width - 125, y + 90, 113, 26), "Back to AP")) healthPage = false;
+                    GUI.Label(new Rect(x + 12, y + 124, width - 24, 24), "Next launch: " + HouseRules.NextHealthPercent + "% max HP");
+                    if (HouseRules.CanConfigureHealth)
+                    {
+                        if (GUI.Button(new Rect(x + 12, y + 154, 80, 27), "-25%")) HouseRules.ChangeHealthPercent(-25);
+                        if (GUI.Button(new Rect(x + 100, y + 154, 80, 27), "+25%")) HouseRules.ChangeHealthPercent(25);
+                        if (GUI.Button(new Rect(x + 188, y + 154, 100, 27), "Normal")) HouseRules.ChangeHealthPercent(-100);
+                    }
+                    GUI.Label(new Rect(x + 12, y + 187, width - 24, 24), HouseRules.HealthStatus);
+                    GUI.Label(new Rect(x + 12, y + 216, width - 24, 24), HouseRules.HealthCounts);
+                    GUI.Label(new Rect(x + 12, y + 245, width - 24, 24), "10 base HP -> " + HealthBudget.Target(10, HouseRules.NextHealthPercent) + " max HP");
+                    if (height >= 320) GUI.Label(new Rect(x + 12, y + 274, width - 24, 24), "Temporary modifier; no permanent max or current HP setter.");
+                    if (height >= 345) GUI.Label(new Rect(x + 12, y + 302, width - 24, 24), "Fresh disposable solo adventure only. Restart to apply.");
+                    if (height >= 370) GUI.Label(new Rect(x + 12, y + 330, width - 24, 24), "See hero-health-probe.txt for before/after verification.");
+                    return;
+                }
+                GUI.Label(new Rect(x + 12, y + 92, width - 145, 24), "Extra hero action points (solo)");
+                if (GUI.Button(new Rect(x + width - 125, y + 90, 113, 26), "Hero health")) healthPage = true;
                 GUI.Label(new Rect(x + 12, y + 124, width - 24, 24), "Next launch: +" + HouseRules.NextBonus + " AP" + (HouseRules.NextBonus == 0 ? " (off)" : ""));
                 if (HouseRules.CanConfigure)
                 {
