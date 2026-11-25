@@ -101,8 +101,8 @@ internal sealed class ModMenu
                     GUI.Label(new Rect(x + 12, y + 187, width - 24, 24), HouseRules.HealthStatus);
                     GUI.Label(new Rect(x + 12, y + 216, width - 24, 24), HouseRules.HealthCounts);
                     GUI.Label(new Rect(x + 12, y + 245, width - 24, 24), "10 base HP -> " + HealthBudget.Target(10, HouseRules.NextHealthPercent) + " max HP");
-                    if (height >= 320 && HouseRules.CanConfigureHealth && GUI.Button(new Rect(x + 12, y + 274, width - 24, 26), "Computed health: " + (HouseRules.NextComputedHealth ? "ON" : "OFF (legacy temporary)"))) HouseRules.ToggleComputedHealth();
-                    if (height >= 345) GUI.Label(new Rect(x + 12, y + 302, width - 24, 24), "Fresh disposable solo adventure only. Restart to apply.");
+                    if (height >= 320 && HouseRules.CanConfigureHealth && GUI.Button(new Rect(x + 12, y + 274, width - 24, 26), "Native trial next launch: " + (HouseRules.NextNativeHealthArm ? "ARMED" : "OFF"))) HouseRules.ToggleNativeHealthArm();
+                    if (height >= 345) GUI.Label(new Rect(x + 12, y + 302, width - 24, 24), "One hero only; may persist. Fresh disposable solo; restart.");
                     if (height >= 370) GUI.Label(new Rect(x + 12, y + 330, width - 24, 24), "See hero-health-probe.txt for before/after verification.");
                     return;
                 }

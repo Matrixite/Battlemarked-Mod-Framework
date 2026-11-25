@@ -1,4 +1,13 @@
-# Battlemarked Mod Framework (BMF) — v0.5.3-alpha
+# Battlemarked Mod Framework (BMF) — v0.5.4-alpha
+
+## New in v0.5.4 — one-shot native maximum health trial
+
+The v0.5.3 computed getter returned 20 while the native stats facade remained 16. The rule correctly stopped. AP remained operational (49 refunds, 23 resets, zero errors). Both previous experimental health paths (temporary modifier churn and computed getter detour) are disabled in this version; their source remains in Git history.
+
+This version tests the same verified native StatsFacade.TrySetStatMax/ TrySetStat methods used in earlier AP experiments, but with Health=2. It is **read-only unless explicitly armed**. F10 > House rules > Hero health: set 125%, then click Native trial next launch so it says ARMED. Restart and start a completely new disposable local solo adventure. The arm is consumed at launch. Move a full-health unmodified hero first. At most one native health object is changed during the entire process; injured heroes and existing modifier baselines are skipped. Current HP is preserved (the value setter is used only if needed to preserve original HP or roll back). The report verifies raw, effective and permanent maximum plus current HP and modifier count. A failed write attempts same-object rollback; failure can leave modified state. Subsequent observations are read-only, including after refills. No automatic reapplication, no teardown restoration and no changes to other heroes. This is a diagnostic trial, not a party-wide release.
+
+**Native maximum may persist in saved adventures. Do not arm on any valuable or previously modified save. Discard the test adventure afterwards.** Re-arming and loading a modified adventure may compound its health. The framework cannot prove the save is fresh. Test whether the selected hero can actually heal above the original max and retain it through a round; upload hero-health-probe.txt, house-rules-probe.txt and LogOutput.log. If the trial verifies and is retained, a later revision can address party-wide identity and baseline handling. 100% does not undo previous native writes. AP code remains unchanged.
+
 
 ## New in v0.5.3 — computed health trial
 

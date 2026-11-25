@@ -15,6 +15,11 @@ internal static class HealthBudget
         => float.IsFinite(nativeMax) && nativeMax > 0 && nativeMax <= 10000 && nativeMax == MathF.Truncate(nativeMax)
             ? Target((int)nativeMax, percent) : nativeMax;
 
+    internal static bool CanNativeTrial(int percent, int current, int effectiveMax, float objectValue,
+        float objectMax, float permanentMax, float rawMax, int modifierCount)
+        => modifierCount == 0 && CanApply(percent, current, effectiveMax, objectValue, objectMax, permanentMax, rawMax, modifierCount)
+           && Target(effectiveMax, percent) > effectiveMax;
+
     // Initial application requires full HP and no net temporary max change.
     // A positive, integral raw maximum plus a consistent permanent maximum can
     // include existing native permanent modifiers; their count is preserved.

@@ -5,7 +5,7 @@ using Battlemarked.ModFramework;
 
 namespace Battlemarked.Example;
 
-[BepInPlugin("org.battlemarked.example", "BMF Example: Scene Logger", "0.5.3")]
+[BepInPlugin("org.battlemarked.example", "BMF Example: Scene Logger", "0.5.4")]
 [BepInDependency(Framework.Guid, Framework.Version)]
 public sealed class ExamplePlugin : BasePlugin
 {

@@ -3,74 +3,50 @@ using BepInEx.Configuration;
 
 namespace Battlemarked.ModFramework;
 
-// Experimental health-only rule. Native temporary modifier, never direct max/value setters.
-// Caller has already verified the exact build, local solo active hero, and Unity main thread.
+// One explicitly armed native-max trial. Caller verifies build, main thread and local solo hero.
+// No repeated writes, no temporary modifiers, no getter patches. May persist in a disposable save.
 internal sealed class HeroHealthRule
 {
     private readonly ModuleContext ctx;
     private readonly ConfigEntry<int> nextPercent;
+    private readonly ConfigEntry<bool> nextArm;
     private readonly int percent;
-    private readonly ConfigEntry<bool> nextComputed;
-    private readonly bool computedMode;
-    private bool computedHook, suppressComputed;
-    private long computedHits;
-    private int computedVerified, computedRejected;
-    private string computedStatus = "not attempted";
-    private readonly Dictionary<IntPtr, object> computedPieces = new();
-    private MethodInfo usesHealth, isDowned, stats, getObject, getStat, getMax, value, max, permanent, raw, modifiers, add;
-    private PropertyInfo nativePointer, facadePointer, count;
-    private ConstructorInfo modifierCtor;
-    private object healthType, additive, temporary;
-    private bool ready, faulted, dirty = true;
-    private int observations, attempts, applied, errors, lost, refreshed, nextId, throttled, recalculations, matchedRecalculations;
-    private bool recalcHookAttached;
-    private string recalcStatus = "not attempted";
+    private bool armed, consumed, ready, faulted, dirty = true;
+    private MethodInfo usesHealth, isDowned, stats, getObject, getStat, getMax, value, max, permanent, raw, modifiers, setMax, setValue;
+    private PropertyInfo pointer, count;
+    private object healthType;
+    private IntPtr trialKey;
+    private int baseline, target, originalCurrent, observations, verifiedObservations, lost, errors, skipped;
+    private bool applied, rolledBack, rollbackFailed;
     private DateTime lastWrite;
     private readonly List<string> samples = new();
-    private sealed class Entry
-    {
-        internal int Id, Target, Base, BaseRaw, BaseModifiers, Attempts, Refreshes, LastCurrent = -1, LastMax = -1;
-        internal bool Attempted, Applied, Lost;
-        internal readonly HealthRefreshWindow Rate = new();
-    }
-    // Retain baseline and attempts per native health object for the process lifetime.
-    // Never stack on a changed baseline; reused addresses may be conservatively skipped.
-    private readonly Dictionary<IntPtr, Entry> entries = new();
-    // Only retain observed active-hero wrappers within the current local session.
-    // Never dereference a stored wrapper unless a live recalculation matched its facade.
-    private readonly Dictionary<IntPtr, object> trackedFacades = new();
-    internal bool Enabled => Available && percent > 100;
-    internal bool ComputedMode => computedMode;
-    internal bool NextComputedMode => nextComputed.Value;
-    internal void ToggleComputedMode() { nextComputed.Value = !nextComputed.Value; ctx.Config.Save(); dirty = true; }
-    internal void SetComputedHook(bool attached, string detail) { computedHook = attached; computedStatus = detail; dirty = true; }
-    internal void SetRecalculationStatus(bool attached, string status)
-    { recalcHookAttached = attached; recalcStatus = status; dirty = true; }
-    internal void ClearScope()
-    { trackedFacades.Clear(); computedPieces.Clear(); dirty = true; }
-    internal object MatchRecalculatedFacade(object facade)
-    {
-        if (!Enabled || facade == null || facadePointer == null) return null;
-        recalculations++; dirty = true;
-        var key = (IntPtr)facadePointer.GetValue(facade);
-        if (key == IntPtr.Zero || !trackedFacades.TryGetValue(key, out var piece)) return null;
-        var live = stats.Invoke(piece, null);
-        if (live == null || (IntPtr)facadePointer.GetValue(live) != key) return null;
-        matchedRecalculations++;
-        return piece;
-    }
     internal int NextPercent => HealthBudget.Normalize(nextPercent.Value);
-    internal bool Available => ready && !faulted;
-    internal string Status => !ready ? "Health metadata unavailable" : faulted ? "Health rule stopped; see report" : percent == 100 ? "Normal health (read-only)" : $"Active: {percent}% max HP ({(computedMode ? (computedHook ? "computed" : "hook unavailable") : "temporary")})";
-    internal string Counts => computedMode ? $"Verified: {computedVerified} | Getter hits: {computedHits} | Errors: {errors}" : $"Applied: {applied} | Refreshed: {refreshed} | Lost: {lost} | Errors: {errors}";
+    internal bool NextArmed => nextArm.Value;
+    internal bool Available => ready;
+    internal string Status => !ready ? "Native health metadata unavailable" : faulted ? "Health trial stopped; see report" : applied ? $"Native trial: {baseline} -> {target} HP" : armed && !consumed ? $"Armed: {percent}% (one hero)" : "Read-only; arm for next launch";
+    internal string Counts => $"Verified: {verifiedObservations} | Lost: {lost} | Errors: {errors}";
     internal void ChangePercent(int delta)
     {
         if (!Available) return;
         nextPercent.Value = Math.Clamp(NextPercent + delta, 100, 200);
-        ctx.Config.Save();
+        if (NextPercent == 100) nextArm.Value = false;
+        ctx.Config.Save(); dirty = true;
+    }
+    internal void ToggleArm()
+    {
+        if (!Available || NextPercent == 100) return;
+        nextArm.Value = !nextArm.Value; ctx.Config.Save(); dirty = true;
+    }
+    internal void ClearScope()
+    {
+        if (trialKey != IntPtr.Zero)
+        {
+            Sample("Trial scope ended; no restoration attempted on departed native objects. Discard test adventure.");
+            trialKey = IntPtr.Zero;
+        }
+        // The arm is never renewed by a scene change or teardown.
         dirty = true;
     }
-
     private static MethodInfo Exact(Type type, string name, string signature)
     {
         var matches = type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
@@ -79,26 +55,24 @@ internal sealed class HeroHealthRule
         if (matches.Length != 1) throw new InvalidOperationException("Exact health method unavailable: " + type.FullName + "." + name);
         return matches[0];
     }
-    private static object VerifiedEnum(Type type, string name, int expected)
-    {
-        if (!type.IsEnum || !Enum.IsDefined(type, name)) throw new InvalidOperationException("Missing health enum member " + name);
-        object result = Enum.Parse(type, name);
-        if (Convert.ToInt32(result) != expected) throw new InvalidOperationException("Unexpected enum value " + name);
-        return result;
-    }
     internal HeroHealthRule(ModuleContext context, Type piece, Type facade, Type stat, Type enumType)
     {
         ctx = context;
         nextPercent = ctx.Config.Bind("HouseRules", "HeroMaxHealth050", 100,
-            "Experimental max health 100/125/150/175/200%; temporary modifier; restart; fresh disposable local solo adventures only.");
+            "Experimental max health target 100/125/150/175/200%. Native maximum trial requires separate one-shot arm. Fresh disposable solo only.");
+        nextArm = ctx.Config.Bind("HouseRules", "ArmNativeHealth054", false,
+            "One-shot native health maximum trial on the first eligible hero; consumed at startup. May persist in saves. Fresh disposable solo only.");
         percent = NextPercent;
-        nextComputed = ctx.Config.Bind("HouseRules", "ComputedHealth053", true,
-            "Experimental computed max HP; no modifier writes. False selects legacy temporary mode. Restart; disposable local solo only.");
-        computedMode = nextComputed.Value;
+        armed = nextArm.Value && percent > 100;
+        // Consume saved arm before any gameplay write; no auto-rearm on subsequent restarts.
+        nextArm.Value = false;
+        ctx.Config.Save();
         try
         {
-            if (enumType.FullName != "Jade.GameModel.Stats+Type") throw new InvalidOperationException("Unexpected stats enum");
-            healthType = VerifiedEnum(enumType, "Health", 2);
+            if (!enumType.IsEnum || enumType.FullName != "Jade.GameModel.Stats+Type" || !Enum.IsDefined(enumType, "Health"))
+                throw new InvalidOperationException("Missing health enum");
+            healthType = Enum.Parse(enumType, "Health");
+            if (Convert.ToInt32(healthType) != 2) throw new InvalidOperationException("Unexpected Health enum value");
             usesHealth = Exact(piece, "get_usesHealth", "200002");
             isDowned = Exact(piece, "get_IsDowned", "200002");
             stats = Exact(piece, "get_stats", "2000128310");
@@ -110,102 +84,48 @@ internal sealed class HeroHealthRule
             permanent = Exact(stat, "get_PermanentMax", "20000C");
             raw = Exact(stat, "get_maxValue", "20000C");
             modifiers = Exact(stat, "get_modifiers", "2000151221011282F8");
-            add = Exact(stat, "AddModifier", "2001011282F8");
-            var modifier = add.GetParameters()[0].ParameterType;
-            if (modifier.FullName != "Jade.GameModel.StatModifier" || add.ReturnType != typeof(void))
-                throw new InvalidOperationException("Unexpected modifier type");
-            var ctors = modifier.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                .Where(c => Convert.ToHexString(c.Module.ResolveSignature(c.MetadataToken)) == "2004011185C00C1185AC1185B0").ToArray();
-            if (ctors.Length != 1) throw new InvalidOperationException("Exact modifier constructor unavailable");
-            modifierCtor = ctors[0];
-            var args = modifierCtor.GetParameters();
-            if (args.Length != 4 || args[0].ParameterType != enumType || args[1].ParameterType != typeof(float)
-                || args[2].ParameterType.Name != "StatModifierType" || args[3].ParameterType.Name != "StatModifierPermanency")
-                throw new InvalidOperationException("Unexpected modifier constructor parameters");
-            additive = VerifiedEnum(args[2].ParameterType, "AdditionAndSubtraction", 0);
-            temporary = VerifiedEnum(args[3].ParameterType, "Temporary", 0);
-            nativePointer = stat.GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance);
-            facadePointer = facade.GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance);
-            if (facadePointer?.PropertyType != typeof(IntPtr) || !facadePointer.CanRead) facadePointer = null;
+            setMax = Exact(facade, "TrySetStatMax", "2002021185C00C");
+            setValue = Exact(facade, "TrySetStat", "2002021185C00C");
+            foreach (var method in new[] { setMax, setValue })
+            {
+                var args = method.GetParameters();
+                if (method.IsStatic || method.ReturnType != typeof(bool) || args.Length != 2 ||
+                    args[0].ParameterType != enumType || args[1].ParameterType != typeof(float))
+                    throw new InvalidOperationException("Unexpected health setter signature");
+            }
+            pointer = stat.GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance);
             count = modifiers.ReturnType.GetProperty("Count", BindingFlags.Public | BindingFlags.Instance);
-            if (nativePointer == null || nativePointer.PropertyType != typeof(IntPtr) || !nativePointer.CanRead
-                || count == null || count.PropertyType != typeof(int) || !count.CanRead)
-                throw new InvalidOperationException("Health pointer or modifier count unavailable");
+            if (pointer == null || pointer.PropertyType != typeof(IntPtr) || !pointer.CanRead ||
+                count == null || count.PropertyType != typeof(int) || !count.CanRead)
+                throw new InvalidOperationException("Native health identity or modifier count unavailable");
             ready = true;
-            ctx.Log.LogInfo("Health metadata verified: Health=2, additive=0, temporary=0");
+            ctx.Log.LogInfo("BMF native health trial metadata verified; armed=" + armed);
         }
         catch (Exception ex) { Stop("metadata", ex); }
         Write();
     }
-
     private float F(MethodInfo method, object obj) => (float)method.Invoke(obj, null);
     private int I(MethodInfo method, object facade) => (int)method.Invoke(facade, new[] { healthType });
     private int ModifierCount(object stat)
     {
         var list = modifiers.Invoke(stat, null);
-        // Unknown/null list is not proof that there are no modifiers.
         return list == null ? -1 : (int)count.GetValue(list);
     }
     private string Snapshot(object facade, object stat) =>
         $"current={I(getStat, facade)} max={I(getMax, facade)} objectValue={F(value, stat)} objectMax={F(max, stat)} permanentMax={F(permanent, stat)} rawMax={F(raw, stat)} modifiers={ModifierCount(stat)}";
-    // The native getter result is the input; this mode never inserts a stat modifier.
-    internal object ComputedPiece(object stat)
+    private bool SameStat(object facade, IntPtr key)
     {
-        if (!Enabled || !computedMode || !computedHook || suppressComputed || stat == null) return null;
-        var key = (IntPtr)nativePointer.GetValue(stat);
-        return key != IntPtr.Zero && computedPieces.TryGetValue(key, out var piece) ? piece : null;
-    }
-    internal bool IsLiveHealthStat(object piece, object stat)
-    {
-        if (usesHealth.Invoke(piece, null) is not true || isDowned.Invoke(piece, null) is not false) return false;
-        var facade = stats.Invoke(piece, null);
-        if (facade == null) return false;
         var live = getObject.Invoke(facade, new[] { healthType });
-        return live != null && (IntPtr)nativePointer.GetValue(live) == (IntPtr)nativePointer.GetValue(stat);
+        return live != null && (IntPtr)pointer.GetValue(live) == key;
     }
-    internal float ScaleNativeMax(float nativeMax)
-    {
-        float result = HealthBudget.ComputedTarget(nativeMax, percent);
-        if (result != nativeMax) { computedHits++; dirty = true; }
-        return result;
-    }
-    private void ObserveComputed(object piece, object facade, object stat, IntPtr key, Entry e, bool allowWrite)
-    {
-        if (!Enabled || !computedHook) return;
-        // Bypass our own getter hook only during the native-baseline measurement.
-        int nativeMax; float nativeObjectMax;
-        suppressComputed = true;
-        try { nativeMax = I(getMax, facade); nativeObjectMax = F(max, stat); }
-        finally { suppressComputed = false; }
-        if (nativeMax != nativeObjectMax || HealthBudget.ComputedTarget(nativeObjectMax, percent) <= nativeObjectMax)
-        { computedPieces.Remove(key); return; }
-        if (!computedPieces.ContainsKey(key))
-        {
-            if (!allowWrite || computedPieces.Count >= 128) return;
-            computedPieces[key] = piece;
-        }
-        else computedPieces[key] = piece;
-        int target = (int)HealthBudget.ComputedTarget(nativeObjectMax, percent);
-        int current = I(getStat, facade), visibleMax = I(getMax, facade);
-        float visibleObjectMax = F(max, stat);
-        if (visibleMax != target || visibleObjectMax != target)
-        {
-            computedPieces.Remove(key); computedRejected++; dirty = true;
-            Sample($"health#{e.Id} computed getter not propagated: native={nativeMax} facade={visibleMax} objectMax={visibleObjectMax} target={target}; removed registration");
-            // Stop rather than repeatedly patching an unverified native path.
-            faulted = true; errors++; computedPieces.Clear();
-            return;
-        }
-        if (!e.Applied) { e.Applied = true; computedVerified++; }
-        if (e.LastCurrent != current || e.LastMax != visibleMax || e.Base != nativeMax)
-        {
-            Sample($"health#{e.Id} computed verified=True nativeMax={nativeMax} target={target} current={current} permanentMax={F(permanent, stat)} rawMax={F(raw, stat)} modifiers={ModifierCount(stat)}");
-            e.Base = nativeMax; e.Target = target; e.LastCurrent = current; e.LastMax = visibleMax;
-        }
-    }
+    private bool Matches(object facade, object stat, int current, int expectedMax)
+        => I(getStat, facade) == current && F(value, stat) == current && MaxMatches(facade, stat, expectedMax);
+    private bool MaxMatches(object facade, object stat, int expectedMax)
+        => I(getMax, facade) == expectedMax && F(max, stat) == expectedMax &&
+           F(permanent, stat) == expectedMax && F(raw, stat) == expectedMax && ModifierCount(stat) == 0;
     internal void Observe(object piece, bool allowWrite = true, string source = "AP")
     {
-        if (!Available) return;
+        if (!ready || faulted) return;
         try
         {
             if (usesHealth.Invoke(piece, null) is not true || isDowned.Invoke(piece, null) is not false) return;
@@ -213,85 +133,65 @@ internal sealed class HeroHealthRule
             if (facade == null) return;
             var stat = getObject.Invoke(facade, new[] { healthType });
             if (stat == null) return;
-            var key = (IntPtr)nativePointer.GetValue(stat);
+            var key = (IntPtr)pointer.GetValue(stat);
             if (key == IntPtr.Zero) return;
-            if (Enabled && !computedMode && facadePointer != null && source == "AP")
+            if (consumed)
             {
-                var facadeKey = (IntPtr)facadePointer.GetValue(facade);
-                if (facadeKey != IntPtr.Zero && (trackedFacades.ContainsKey(facadeKey) || trackedFacades.Count < 128))
-                    trackedFacades[facadeKey] = piece;
+                if (!applied || trialKey == IntPtr.Zero || trialKey != key) return;
+                observations++;
+                int current = I(getStat, facade);
+                bool retained = MaxMatches(facade, stat, target) && current >= 0 && current <= target && F(value, stat) == current;
+                if (retained) verifiedObservations++; else lost++;
+                Sample($"trial observed source={source} retained={retained} | {Snapshot(facade, stat)}");
+                return;
             }
-            if (!entries.TryGetValue(key, out var e))
+            if (!armed || !allowWrite || percent == 100) return;
+            int initial = I(getStat, facade), nativeMax = I(getMax, facade);
+            if (!HealthBudget.CanNativeTrial(percent, initial, nativeMax, F(value, stat), F(max, stat), F(permanent, stat), F(raw, stat), ModifierCount(stat)))
+            { skipped++; dirty = true; return; }
+            // Reserve the one attempt before entering native code. Never scale a second object.
+            consumed = true; trialKey = key; baseline = nativeMax; originalCurrent = initial;
+            target = HealthBudget.Target(baseline, percent);
+            Sample($"native trial target={target} | before {Snapshot(facade, stat)}");
+            try
             {
-                if (entries.Count >= 128) return;
-                e = new Entry { Id = ++nextId };
-                entries.Add(key, e);
+                if (!SameStat(facade, key) || !Matches(facade, stat, initial, baseline))
+                    throw new InvalidOperationException("Native health identity or baseline changed");
+                bool wrote = setMax.Invoke(facade, new object[] { healthType, (float)target }) is true;
+                if (!wrote || !SameStat(facade, key) || !MaxMatches(facade, stat, target))
+                    throw new InvalidOperationException("Native maximum not verified");
+                // Preserve pre-write HP if the native maximum setter changed it.
+                if (I(getStat, facade) != initial && setValue.Invoke(facade, new object[] { healthType, (float)initial }) is not true)
+                    throw new InvalidOperationException("Current HP preservation failed");
+                if (!SameStat(facade, key) || !Matches(facade, stat, initial, target))
+                    throw new InvalidOperationException("Native health trial verification failed");
+                applied = true;
+                Sample($"native trial verified=True | after {Snapshot(facade, stat)}");
             }
-            observations++;
-            if (computedMode && percent > 100) { ObserveComputed(piece, facade, stat, key, e, allowWrite); return; }
-            int current = I(getStat, facade), effectiveMax = I(getMax, facade);
-            if (current != e.LastCurrent || effectiveMax != e.LastMax)
+            catch (Exception ex)
             {
-                Sample($"health#{e.Id} observed | {Snapshot(facade, stat)}");
-                e.LastCurrent = current; e.LastMax = effectiveMax;
-            }
-            float objectValue = F(value, stat), objectMax = F(max, stat);
-            float permanentMax = F(permanent, stat), rawMax = F(raw, stat);
-            int modifierCount = ModifierCount(stat);
-            if (e.Applied)
-            {
-                bool retained = effectiveMax == e.Target && objectMax == e.Target && permanentMax == e.Base &&
-                    rawMax == e.BaseRaw && modifierCount == e.BaseModifiers + 1;
-                if (!retained && !e.Lost)
+                try
                 {
-                    e.Lost = true; lost++;
-                    Sample($"health#{e.Id} modifier no longer matches | {Snapshot(facade, stat)}");
+                    // Roll back only the same object with no other modifiers. No blind retries.
+                    if (!SameStat(facade, key) || ModifierCount(stat) != 0)
+                        throw new InvalidOperationException("Rollback identity/baseline unavailable");
+                    bool maxOk = Matches(facade, stat, initial, baseline) ||
+                        setMax.Invoke(facade, new object[] { healthType, (float)baseline }) is true;
+                    bool hpOk = I(getStat, facade) == initial ||
+                        setValue.Invoke(facade, new object[] { healthType, (float)initial }) is true;
+                    rolledBack = maxOk && hpOk && SameStat(facade, key) && Matches(facade, stat, initial, baseline);
+                    rollbackFailed = !rolledBack;
+                    Sample($"native trial rollback verified={rolledBack} | {Snapshot(facade, stat)}");
                 }
-                else if (retained)
-                {
-                    e.Lost = false;
-                    return;
-                }
+                catch (Exception rollback) { rollbackFailed = true; Sample("Rollback unverified: " + rollback.Message); }
+                Stop("native trial", ex);
             }
-            if (percent == 100 || !allowWrite) return;
-            bool refresh = e.Attempted;
-            if (refresh)
-            {
-                // Only reapply after a previously verified write has disappeared AND the exact
-                // baseline max, raw max and modifier count have returned. Never refill current HP.
-                if (!e.Applied || !e.Lost || !HealthBudget.CanRefresh(current, effectiveMax, objectValue, objectMax,
-                        permanentMax, rawMax, modifierCount, e.Base, e.BaseRaw, e.BaseModifiers)) return;
-            }
-            else
-            {
-                if (!HealthBudget.CanApply(percent, current, effectiveMax, objectValue, objectMax,
-                        permanentMax, rawMax, modifierCount)) return;
-                int target = HealthBudget.Target(effectiveMax, percent);
-                if (target <= effectiveMax) return;
-                e.Base = effectiveMax; e.Target = target; e.BaseRaw = (int)rawMax; e.BaseModifiers = modifierCount;
-            }
-            // No lifetime attempt ceiling. A rolling per-object rate limit prevents a
-            // recalculation loop from flooding native writes; a later observation can retry.
-            if (!e.Rate.TryReserve(Environment.TickCount64)) { throttled++; dirty = true; return; }
-            e.Attempted = true; e.Attempts++; attempts++;
-            Sample($"health#{e.Id} {(refresh ? "refresh" : "attempt")} source={source} target={e.Target} attempt={e.Attempts} | before {Snapshot(facade, stat)}");
-            object modifier = modifierCtor.Invoke(new object[] { healthType, (float)(e.Target - e.Base), additive, temporary });
-            add.Invoke(stat, new[] { modifier });
-            int afterCurrent = I(getStat, facade);
-            bool verified = I(getMax, facade) == e.Target && F(max, stat) == e.Target
-                && F(permanent, stat) == e.Base && F(raw, stat) == e.BaseRaw
-                && afterCurrent == current && F(value, stat) == current
-                && ModifierCount(stat) == e.BaseModifiers + 1;
-            Sample($"health#{e.Id} {(refresh ? "refreshed" : "applied")} verified={verified} | after {Snapshot(facade, stat)}");
-            if (!verified) throw new InvalidOperationException("Temporary HP modifier result not verified; no further health writes");
-            if (refresh) { refreshed++; e.Refreshes++; } else applied++;
-            e.Applied = true; e.Lost = false; e.LastCurrent = afterCurrent; e.LastMax = e.Target;
         }
-        catch (Exception ex) { Stop("observation/apply", ex); }
+        catch (Exception ex) { Stop("observation", ex); }
     }
     private void Stop(string stage, Exception ex)
     {
-        faulted = true; computedPieces.Clear(); errors++;
+        faulted = true; errors++;
         Sample($"Stopped: {stage}: {ex.GetType().Name}: {ex.Message}");
         ctx.Log.LogWarning("BMF health rule stopped: " + stage + ": " + ex.Message);
     }
@@ -305,13 +205,11 @@ internal sealed class HeroHealthRule
     {
         try
         {
-            var lines = new List<string> { "BMF hero maximum health probe (computed or temporary mode)",
+            var lines = new List<string> { "BMF hero maximum health probe (one-shot native maximum trial)",
                 "Framework=" + Framework.Version, "GameVersion=" + ctx.GameVersion, "GameAssemblySHA256=" + ctx.GameAssemblySha256,
                 "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + Status,
-                $"ConfiguredPercent={percent} NextPercent={NextPercent} ComputedMode={computedMode} NextComputedMode={NextComputedMode} ComputedHook={computedHook} ComputedTracked={computedPieces.Count} ComputedVerified={computedVerified} ComputedHits={computedHits} ComputedRejected={computedRejected} Observations={observations} Attempts={attempts} Applied={applied} Refreshed={refreshed} Lost={lost} Throttled={throttled} RecalcHook={recalcHookAttached} RecalcCalls={recalculations} RecalcMatched={matchedRecalculations} Errors={errors}",
-                "Computed hook: " + computedStatus, "Recalculation hook: " + recalcStatus,
-                "Anonymous native health stat objects; not necessarily distinct heroes. No direct current/max setter." };
-            foreach (var e in entries.Values) lines.Add($"health#{e.Id} attempted={e.Attempted} applied={e.Applied} lost={e.Lost} baseline={e.Base} baselineRaw={e.BaseRaw} baselineModifiers={e.BaseModifiers} target={e.Target} attempts={e.Attempts} refreshes={e.Refreshes} lastCurrent={e.LastCurrent} lastMax={e.LastMax}");
+                $"ConfiguredPercent={percent} NextPercent={NextPercent} Armed={armed} NextArmed={NextArmed} Consumed={consumed} Applied={applied} Baseline={baseline} Target={target} OriginalCurrent={originalCurrent} Observations={observations} VerifiedObservations={verifiedObservations} Lost={lost} Skipped={skipped} RolledBack={rolledBack} RollbackFailed={rollbackFailed} Errors={errors}",
+                "One native health stat object only; no raw pointers. Native maximum may persist. Discard test adventure." };
             lines.AddRange(samples);
             File.WriteAllLines(Path.Combine(ctx.DataDirectory, "hero-health-probe.txt"), lines);
             lastWrite = DateTime.UtcNow; dirty = false;

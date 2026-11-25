@@ -12,9 +12,8 @@ internal sealed class HouseRules : BattlemarkedModule
     public override string Name => "House rules (extra hero AP)";
     private ModuleContext ctx;
     private HeroHealthRule health;
-    private bool computingHealth;
-    internal static bool NextComputedHealth => running?.health?.NextComputedMode ?? true;
-    internal static void ToggleComputedHealth() => running?.health?.ToggleComputedMode();
+    internal static bool NextNativeHealthArm => running?.health?.NextArmed ?? false;
+    internal static void ToggleNativeHealthArm() => running?.health?.ToggleArm();
     internal static int NextHealthPercent => running?.health?.NextPercent ?? 100;
     internal static bool CanConfigureHealth => running?.health?.Available ?? false;
     internal static string HealthStatus => running?.health?.Status ?? "Health rule unavailable";
@@ -164,39 +163,6 @@ internal sealed class HouseRules : BattlemarkedModule
             ctx.Patches.Patch(spend, prefix: Hook(nameof(BeforeSpend)), postfix: Hook(nameof(AfterSpend)));
             partialRefills = ctx.Config.Bind("HouseRules", "PartialAPRefills052", true,
                 "Reset refund budget on a verified same-cap partial-to-full native refill. Full-to-full remains guarded. Restart to apply.").Value;
-            if (health != null && health.Enabled && health.ComputedMode)
-            {
-                try
-                {
-                    var nativeMax = Exact(stat, "get_Max", "20000C");
-                    if (nativeMax.IsStatic || nativeMax.ReturnType != typeof(float)) throw new InvalidOperationException("Unexpected stat max getter");
-                    ctx.Patches.Patch(nativeMax, postfix: Hook(nameof(AfterHealthMax)));
-                    health.SetComputedHook(true, "Stat.get_Max postfix attached");
-                    ctx.Log.LogInfo("BMF computed health hook attached");
-                }
-                catch (Exception ex)
-                {
-                    health.SetComputedHook(false, "Unavailable: " + ex.Message);
-                    ctx.Log.LogWarning("Computed health hook unavailable: " + ex.Message);
-                }
-            }
-            else if (health != null && health.Enabled)
-            {
-                try
-                {
-                    var recalc = Exact(facade, "UpdateModifiers", "2002011512210112831802");
-                    if (recalc.IsStatic || recalc.ReturnType != typeof(void) || recalc.GetParameters().Length != 2 || recalc.GetParameters()[1].ParameterType != typeof(bool))
-                        throw new InvalidOperationException("Unexpected native modifier recalculation signature");
-                    ctx.Patches.Patch(recalc, postfix: Hook(nameof(AfterModifierUpdate)));
-                    health.SetRecalculationStatus(true, "StatsFacade.UpdateModifiers postfix attached");
-                    ctx.Log.LogInfo("BMF health recalculation hook attached");
-                }
-                catch (Exception ex)
-                {
-                    health.SetRecalculationStatus(false, "Unavailable; AP observations retained: " + ex.Message);
-                    ctx.Log.LogWarning("Health recalculation hook unavailable: " + ex.Message);
-                }
-            }
             status = bonus == 0 ? "Read-only AP stat tracing" : refundMode ? $"Experimental +{bonus} AP via capped refunds" : $"Experimental +{bonus} AP on refill or first paid action";
             ctx.Log.LogInfo("BMF house rules: " + status);
         }
@@ -220,37 +186,6 @@ internal sealed class HouseRules : BattlemarkedModule
         foreach (var h in heroes.Values) Sample($"Scope summary stat#{h.Id}: grants={h.Grants} restores={h.Restores} spent={h.Spent} bonusCycles={h.BonusCycles} refunds={h.Refunds} refundBudgetUsed={h.RefundsThisCycle}");
         heroes.Clear();
         dirty = true;
-    }
-    private static void AfterHealthMax(object __instance, ref float __result)
-    {
-        var r = running;
-        if (r == null || r.faulted || r.computingHealth || r.health == null || !r.health.Enabled ||
-            !r.health.ComputedMode || Environment.CurrentManagedThreadId != r.mainThread || model == null) return;
-        r.computingHealth = true;
-        try
-        {
-            var piece = r.health.ComputedPiece(__instance);
-            if (piece == null || r.Scope(piece) != "local solo hero" || !r.health.IsLiveHealthStat(piece, __instance)) return;
-            __result = r.health.ScaleNativeMax(__result);
-        }
-        catch (Exception ex) { r.ctx.Log.LogWarning("Computed health getter skipped: " + ex.Message); }
-        finally { r.computingHealth = false; }
-    }
-    private static void AfterModifierUpdate(object __instance)
-    {
-        var r = running;
-        if (r == null || r.faulted || r.writing != 0 || r.health == null || !r.health.Enabled ||
-            Environment.CurrentManagedThreadId != r.mainThread || model == null) return;
-        try
-        {
-            // Only a live facade already observed for a local hero may trigger a write.
-            var piece = r.health.MatchRecalculatedFacade(__instance);
-            if (piece == null || r.Scope(piece) != "local solo hero") return;
-            r.writing++;
-            try { r.health.Observe(piece, source: "modifier-update"); }
-            finally { r.writing--; }
-        }
-        catch (Exception ex) { r.ctx.Log.LogWarning("Health recalculation observation skipped: " + ex.Message); }
     }
     private bool Flag(MethodInfo method, object target, params object[] args) => method.Invoke(target, args) is bool b && b;
     private int Allowance(object piece) => (int)allowance.Invoke(piece, null);

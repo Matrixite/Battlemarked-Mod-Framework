@@ -104,3 +104,10 @@ Check(HealthBudget.ComputedTarget(10001, 125) == 10001, "oversize max unchanged"
 Check(float.IsNaN(HealthBudget.ComputedTarget(float.NaN, 125)), "invalid max unchanged");
 Check(HealthBudget.ComputedTarget(16, 125) == 20 && HealthBudget.ComputedTarget(16, 125) == 20, "repeat native getter does not stack");
 Console.WriteLine("PASS: computed health target guards.");
+
+Check(HealthBudget.CanNativeTrial(125,16,16,16,16,16,16,0), "native trial full unmodified hero");
+Check(!HealthBudget.CanNativeTrial(125,25,25,25,25,25,22,1), "native trial skips existing modifiers");
+Check(!HealthBudget.CanNativeTrial(125,14,16,14,16,16,16,0), "native trial skips injured");
+Check(!HealthBudget.CanNativeTrial(100,16,16,16,16,16,16,0), "native trial disabled");
+Check(!HealthBudget.CanNativeTrial(125,16,16,16,20,16,16,0), "getter mismatch rejected");
+Console.WriteLine("PASS: native health trial guards.");
