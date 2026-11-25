@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net6.0</TargetFramework><NeedsGameReferences>true</NeedsGameReferences></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../Framework/Battlemarked.ModFramework.csproj" /></ItemGroup>
+</Project>

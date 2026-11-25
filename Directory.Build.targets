@@ -1,0 +1,24 @@
+<Project>
+  <PropertyGroup Condition="'$(NeedsGameReferences)' == 'true'">
+    <LoaderCore>$(GameDir)/BepInEx/core</LoaderCore>
+    <InteropDir>$(GameDir)/BepInEx/interop</InteropDir>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(NeedsGameReferences)' == 'true'">
+    <Reference Include="BepInEx.Core"><HintPath>$(LoaderCore)/BepInEx.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx.Unity.IL2CPP"><HintPath>$(LoaderCore)/BepInEx.Unity.IL2CPP.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="BepInEx.Unity.Common" Condition="Exists('$(LoaderCore)/BepInEx.Unity.Common.dll')"><HintPath>$(LoaderCore)/BepInEx.Unity.Common.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppInterop.Common" Condition="Exists('$(LoaderCore)/Il2CppInterop.Common.dll')"><HintPath>$(LoaderCore)/Il2CppInterop.Common.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(LoaderCore)/0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppInterop.Runtime"><HintPath>$(LoaderCore)/Il2CppInterop.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(InteropDir)/UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(InteropDir)/UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2Cppmscorlib" Condition="Exists('$(InteropDir)/Il2Cppmscorlib.dll')"><HintPath>$(InteropDir)/Il2Cppmscorlib.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <Target Name="CheckGameReferences" BeforeTargets="ResolveAssemblyReferences" Condition="'$(NeedsGameReferences)' == 'true'">
+    <Error Condition="'$(GameDir)' == ''" Text="Supply -p:GameDir=your Battlemarked installation folder." />
+    <Error Condition="!Exists('$(LoaderCore)/BepInEx.Unity.IL2CPP.dll')" Text="Install a current BepInEx 6 Unity IL2CPP x64 build (not pre.1 or Mono)." />
+    <Error Condition="!Exists('$(InteropDir)/UnityEngine.CoreModule.dll')" Text="Launch the game once with BepInEx and close it to generate interop assemblies." />
+    <Error Condition="!Exists('$(InteropDir)/UnityEngine.IMGUIModule.dll')" Text="Missing UnityEngine.IMGUIModule.dll; regenerate interop assemblies or contact the framework developer." />
+    <Error Condition="!Exists('$(LoaderCore)/0Harmony.dll') Or !Exists('$(LoaderCore)/Il2CppInterop.Runtime.dll') Or !Exists('$(LoaderCore)/BepInEx.Core.dll')" Text="BepInEx core references are incomplete." />
+  </Target>
+</Project>

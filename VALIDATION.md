@@ -1,0 +1,3 @@
+# v0.4.6 static validation
+
+Based on v0.4.5 and the +3 report: cap 3, allowance 2, zero grants. Existing exact method signatures and solo/build guards unchanged. New opt-in adjustment uses only consistent full 3-5 AP stats or a verified first spend, targets 2+bonus minus spent, and preserves read-only mode at bonus 0. New setting defaults false. Rollback attempts the original pre-write value and cap. Native state copies, legitimate modifiers, restoration at teardown and round identity remain unresolved. Source changes and archive checked; no C# compilation or in-game validation available. Use disposable solo adventures only.
