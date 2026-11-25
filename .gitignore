@@ -1,0 +1,7 @@
+**/bin/
+**/obj/
+.vs/
+*.user
+interop-report*.txt
+startup-report*.txt
+*.dll
