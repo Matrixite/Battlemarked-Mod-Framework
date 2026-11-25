@@ -241,7 +241,7 @@ internal sealed class HouseRules : BattlemarkedModule
             if (r.health != null && r.health.Available)
             {
                 r.writing++;
-                try { r.health.Observe(piece); } finally { r.writing--; }
+                try { r.health.Observe(piece, allowWrite: false); } finally { r.writing--; }
             }
             var h = r.Identify(piece);
             if (!isSpend && h != null && h.PendingRestore && r.Remaining(piece) <= 2)
@@ -264,6 +264,20 @@ internal sealed class HouseRules : BattlemarkedModule
             r.samplesTaken++;
         }
         catch (Exception ex) { r.Fail("after " + state.Operation, ex); }
+        // Apply after a successful original AP operation: the game may clear modifiers
+        // during the original call. Health failure remains independent of AP.
+        if (!r.faulted && r.health != null && r.health.Available && result != "result=False")
+        {
+            try
+            {
+                if (r.Scope(state.Piece) == "local solo hero")
+                {
+                    r.writing++;
+                    try { r.health.Observe(state.Piece); } finally { r.writing--; }
+                }
+            }
+            catch (Exception ex) { r.ctx.Log.LogWarning("Health observation skipped: " + ex.Message); }
+        }
     }
     private static void BeforeRefill(object __0, out TraceState __state) => __state = Begin(__0, "refill", false);
     private static void AfterRefill(TraceState __state)

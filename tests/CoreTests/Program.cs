@@ -63,6 +63,17 @@ Check(HealthBudget.Target(10, 999) == 10, "invalid setting fail closed");
 Check(!HealthBudget.CanApply(150, 8, 10, 8, 10, 10, 10, 0), "injured excluded");
 Check(!HealthBudget.CanApply(150, 15, 15, 15, 15, 10, 10, 1), "existing modifier excluded");
 Check(!HealthBudget.CanApply(150, 10, 10, 10, 10, 10, 10, -1), "unknown modifiers excluded");
-Check(!HealthBudget.CanApply(150, 10, 10, 10, 10, 10, 10, 1), "existing modifier even when net zero excluded");
+Check(HealthBudget.CanApply(150, 25, 25, 25, 25, 25, 22, 1), "existing permanent modifier baseline");
+Check(HealthBudget.Target(25, 125) == 32, "reported modified hero baseline");
 Check(!HealthBudget.CanApply(150, 10, 10, 10.5f, 10, 10, 10, 0), "fractional mismatch excluded");
 Console.WriteLine("PASS: health target and conservative baseline guards.");
+
+Check(HealthBudget.CanRefresh(11, 16, 11, 16, 16, 16, 0, 16, 16, 0), "reported lost bonus on injured hero");
+Check(HealthBudget.CanRefresh(7, 16, 7, 16, 16, 16, 0, 16, 16, 0), "injured refresh preserves current");
+Check(!HealthBudget.CanRefresh(11, 20, 11, 20, 16, 16, 1, 16, 16, 0), "existing own bonus cannot stack");
+Check(!HealthBudget.CanRefresh(11, 16, 11, 16, 16, 16, 1, 16, 16, 0), "unknown modifier cannot stack");
+Check(!HealthBudget.CanRefresh(11, 17, 11, 17, 17, 16, 1, 16, 16, 0), "changed permanent baseline skipped");
+Check(!HealthBudget.CanRefresh(0, 16, 0, 16, 16, 16, 0, 16, 16, 0), "zero current skipped");
+Check(HealthBudget.CanRefresh(24, 25, 24, 25, 25, 22, 1, 25, 22, 1), "existing baseline modifiers preserved");
+Check(!HealthBudget.CanRefresh(24, 25, 24, 25, 25, 22, 2, 25, 22, 1), "additional native modifier skipped");
+Console.WriteLine("PASS: health refresh and stacking guards.");

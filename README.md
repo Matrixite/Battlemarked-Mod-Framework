@@ -1,4 +1,10 @@
-# Battlemarked Mod Framework (BMF) — v0.5.0-alpha
+# Battlemarked Mod Framework (BMF) — v0.5.1-alpha
+
+## New in v0.5.1 — bounded health refresh
+
+The v0.5.0 125% test verified four applications, but three temporary modifiers disappeared. One object already had a native modifier (22 raw / 25 permanent and effective HP), so it was skipped. This version samples before an AP operation and applies/refreshes after successful spends or refills. Initial application requires full health and a consistent permanent baseline; existing native modifiers may be retained if raw/permanent/effective maximum and modifier count match the guard. The target is calculated from that permanent maximum, e.g. 25 becomes 32 at 125%. If a previously verified bonus disappears, it can be reapplied at the same baseline even while injured, without directly healing or changing permanent HP. Exact original raw/permanent max and modifier count must match, with at most 32 total attempts per native object per process. If the native result changes current HP or fails any check, further health writes stop. Do not use valuable saves. Temporary modifiers may still disappear between AP events, and changes in unrelated modifiers may prevent refresh. The observed count and aggregate values do not prove modifier identity; native copying, additive interactions and UI remain unverified. AP calculation unchanged.
+
+Test 125% in a fresh disposable solo adventure. Move each hero, take damage, complete a round and move again. Upload hero-health-probe.txt and house-rules-probe.txt. Look for Refreshed and verified=True, and unchanged current health across each write. 100% remains read-only and does not remove a previously applied modifier.
 
 ## New in v0.5.0 — experimental hero maximum health
 

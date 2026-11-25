@@ -10,10 +10,24 @@ internal static class HealthBudget
         return (baseMax * Normalize(percent) + 99) / 100;
     }
 
-    // First alpha deliberately excludes injured, downed, fractional, or already modified stats.
+    // Initial application requires full HP and no net temporary max change.
+    // A positive, integral raw maximum plus a consistent permanent maximum can
+    // include existing native permanent modifiers; their count is preserved.
     internal static bool CanApply(int percent, int current, int effectiveMax, float objectValue,
         float objectMax, float permanentMax, float rawMax, int modifierCount)
-        => Normalize(percent) > 100 && effectiveMax > 0 && effectiveMax <= 10000
-           && current == effectiveMax && objectValue == current && objectMax == effectiveMax
-           && permanentMax == effectiveMax && rawMax == effectiveMax && modifierCount == 0;
+        => Normalize(percent) > 100 && current == effectiveMax && effectiveMax > 0 && effectiveMax <= 10000
+           && rawMax > 0 && rawMax <= 10000 && rawMax == MathF.Truncate(rawMax)
+           && modifierCount >= 0 && modifierCount <= 16
+           && (modifierCount != 0 || rawMax == effectiveMax)
+           && objectValue == current && objectMax == effectiveMax && permanentMax == effectiveMax;
+
+    // Only restore the known missing bonus, even if now injured. Unknown changes
+    // or remaining modifiers beyond the exact baseline are never overwritten.
+    internal static bool CanRefresh(int current, int effectiveMax, float objectValue, float objectMax,
+        float permanentMax, float rawMax, int modifierCount, int baseMax, int baseRaw, int baseModifiers)
+        => baseMax > 0 && baseMax <= 10000 && baseRaw > 0 && baseRaw <= 10000
+           && baseModifiers >= 0 && baseModifiers <= 16
+           && current > 0 && current <= baseMax && objectValue == current
+           && effectiveMax == baseMax && objectMax == baseMax && permanentMax == baseMax
+           && rawMax == baseRaw && modifierCount == baseModifiers;
 }

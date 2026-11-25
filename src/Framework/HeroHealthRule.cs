@@ -15,21 +15,22 @@ internal sealed class HeroHealthRule
     private ConstructorInfo modifierCtor;
     private object healthType, additive, temporary;
     private bool ready, faulted, dirty = true;
-    private int observations, attempts, applied, errors, lost, nextId;
+    private int observations, attempts, applied, errors, lost, refreshed, nextId;
+    private const int MaxAttemptsPerObject = 32;
     private DateTime lastWrite;
     private readonly List<string> samples = new();
     private sealed class Entry
     {
-        internal int Id, Target, Base, LastCurrent = -1, LastMax = -1;
+        internal int Id, Target, Base, BaseRaw, BaseModifiers, Attempts, Refreshes, LastCurrent = -1, LastMax = -1;
         internal bool Attempted, Applied, Lost;
     }
-    // Keep attempted identities for the process lifetime; do not retry a disappeared modifier.
-    // This may conservatively skip a reused native address. No native wrappers retained.
+    // Retain baseline and attempts per native health object for the process lifetime.
+    // Never stack on a changed baseline; reused addresses may be conservatively skipped.
     private readonly Dictionary<IntPtr, Entry> entries = new();
     internal int NextPercent => HealthBudget.Normalize(nextPercent.Value);
     internal bool Available => ready && !faulted;
     internal string Status => !ready ? "Health metadata unavailable" : faulted ? "Health rule stopped; see report" : percent == 100 ? "Normal health (read-only)" : $"Active: {percent}% max HP (temporary)";
-    internal string Counts => $"Applied: {applied} | Attempts: {attempts} | Lost: {lost} | Errors: {errors}";
+    internal string Counts => $"Applied: {applied} | Refreshed: {refreshed} | Lost: {lost} | Errors: {errors}";
     internal void ChangePercent(int delta)
     {
         if (!Available) return;
@@ -110,7 +111,7 @@ internal sealed class HeroHealthRule
     }
     private string Snapshot(object facade, object stat) =>
         $"current={I(getStat, facade)} max={I(getMax, facade)} objectValue={F(value, stat)} objectMax={F(max, stat)} permanentMax={F(permanent, stat)} rawMax={F(raw, stat)} modifiers={ModifierCount(stat)}";
-    internal void Observe(object piece)
+    internal void Observe(object piece, bool allowWrite = true)
     {
         if (!Available) return;
         try
@@ -135,29 +136,54 @@ internal sealed class HeroHealthRule
                 Sample($"health#{e.Id} observed | {Snapshot(facade, stat)}");
                 e.LastCurrent = current; e.LastMax = effectiveMax;
             }
-            if (e.Applied && !e.Lost && (effectiveMax != e.Target || F(permanent, stat) != e.Base || F(raw, stat) != e.Base))
+            float objectValue = F(value, stat), objectMax = F(max, stat);
+            float permanentMax = F(permanent, stat), rawMax = F(raw, stat);
+            int modifierCount = ModifierCount(stat);
+            if (e.Applied)
             {
-                e.Lost = true; lost++;
-                Sample($"health#{e.Id} modifier no longer matches; no retry | {Snapshot(facade, stat)}");
+                bool retained = effectiveMax == e.Target && objectMax == e.Target && permanentMax == e.Base &&
+                    rawMax == e.BaseRaw && modifierCount == e.BaseModifiers + 1;
+                if (!retained && !e.Lost)
+                {
+                    e.Lost = true; lost++;
+                    Sample($"health#{e.Id} modifier no longer matches | {Snapshot(facade, stat)}");
+                }
+                else if (retained)
+                {
+                    e.Lost = false;
+                    return;
+                }
             }
-            if (percent == 100 || e.Attempted) return;
-            if (!HealthBudget.CanApply(percent, current, effectiveMax, F(value, stat), F(max, stat),
-                    F(permanent, stat), F(raw, stat), ModifierCount(stat))) return;
-            int target = HealthBudget.Target(effectiveMax, percent);
-            if (target <= effectiveMax) return;
-            e.Attempted = true; e.Base = effectiveMax; e.Target = target; attempts++;
-            Sample($"health#{e.Id} attempt target={target} | before {Snapshot(facade, stat)}");
-            // Add exactly one native temporary modifier. No direct HP refill or permanent max write.
-            object modifier = modifierCtor.Invoke(new object[] { healthType, (float)(target - effectiveMax), additive, temporary });
+            if (percent == 100 || !allowWrite || e.Attempts >= MaxAttemptsPerObject) return;
+            bool refresh = e.Attempted;
+            if (refresh)
+            {
+                // Only reapply after a previously verified write has disappeared AND the exact
+                // baseline max, raw max and modifier count have returned. Never refill current HP.
+                if (!e.Applied || !e.Lost || !HealthBudget.CanRefresh(current, effectiveMax, objectValue, objectMax,
+                        permanentMax, rawMax, modifierCount, e.Base, e.BaseRaw, e.BaseModifiers)) return;
+            }
+            else
+            {
+                if (!HealthBudget.CanApply(percent, current, effectiveMax, objectValue, objectMax,
+                        permanentMax, rawMax, modifierCount)) return;
+                int target = HealthBudget.Target(effectiveMax, percent);
+                if (target <= effectiveMax) return;
+                e.Base = effectiveMax; e.Target = target; e.BaseRaw = (int)rawMax; e.BaseModifiers = modifierCount;
+            }
+            e.Attempted = true; e.Attempts++; attempts++;
+            Sample($"health#{e.Id} {(refresh ? "refresh" : "attempt")} target={e.Target} attempt={e.Attempts}/{MaxAttemptsPerObject} | before {Snapshot(facade, stat)}");
+            object modifier = modifierCtor.Invoke(new object[] { healthType, (float)(e.Target - e.Base), additive, temporary });
             add.Invoke(stat, new[] { modifier });
             int afterCurrent = I(getStat, facade);
-            bool verified = I(getMax, facade) == target && F(max, stat) == target
-                && F(permanent, stat) == effectiveMax && F(raw, stat) == effectiveMax
-                && afterCurrent >= current && afterCurrent <= target && F(value, stat) == afterCurrent
-                && ModifierCount(stat) == 1;
-            Sample($"health#{e.Id} applied verified={verified} | after {Snapshot(facade, stat)}");
+            bool verified = I(getMax, facade) == e.Target && F(max, stat) == e.Target
+                && F(permanent, stat) == e.Base && F(raw, stat) == e.BaseRaw
+                && afterCurrent == current && F(value, stat) == current
+                && ModifierCount(stat) == e.BaseModifiers + 1;
+            Sample($"health#{e.Id} {(refresh ? "refreshed" : "applied")} verified={verified} | after {Snapshot(facade, stat)}");
             if (!verified) throw new InvalidOperationException("Temporary HP modifier result not verified; no further health writes");
-            e.Applied = true; applied++; e.LastCurrent = afterCurrent; e.LastMax = target;
+            if (refresh) { refreshed++; e.Refreshes++; } else applied++;
+            e.Applied = true; e.Lost = false; e.LastCurrent = afterCurrent; e.LastMax = e.Target;
         }
         catch (Exception ex) { Stop("observation/apply", ex); }
     }
@@ -180,9 +206,9 @@ internal sealed class HeroHealthRule
             var lines = new List<string> { "BMF hero maximum health probe (temporary modifier experiment)",
                 "Framework=" + Framework.Version, "GameVersion=" + ctx.GameVersion, "GameAssemblySHA256=" + ctx.GameAssemblySha256,
                 "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + Status,
-                $"ConfiguredPercent={percent} NextPercent={NextPercent} Observations={observations} Attempts={attempts} Applied={applied} Lost={lost} Errors={errors}",
+                $"ConfiguredPercent={percent} NextPercent={NextPercent} Observations={observations} Attempts={attempts} Applied={applied} Refreshed={refreshed} Lost={lost} Errors={errors}",
                 "Anonymous native health stat objects; not necessarily distinct heroes. No direct current/max setter." };
-            foreach (var e in entries.Values) lines.Add($"health#{e.Id} attempted={e.Attempted} applied={e.Applied} lost={e.Lost} baseline={e.Base} target={e.Target} lastCurrent={e.LastCurrent} lastMax={e.LastMax}");
+            foreach (var e in entries.Values) lines.Add($"health#{e.Id} attempted={e.Attempted} applied={e.Applied} lost={e.Lost} baseline={e.Base} baselineRaw={e.BaseRaw} baselineModifiers={e.BaseModifiers} target={e.Target} attempts={e.Attempts} refreshes={e.Refreshes} lastCurrent={e.LastCurrent} lastMax={e.LastMax}");
             lines.AddRange(samples);
             File.WriteAllLines(Path.Combine(ctx.DataDirectory, "hero-health-probe.txt"), lines);
             lastWrite = DateTime.UtcNow; dirty = false;
