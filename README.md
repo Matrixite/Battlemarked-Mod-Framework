@@ -1,4 +1,10 @@
-# Battlemarked Mod Framework (BMF) — v0.4.6-alpha
+# Battlemarked Mod Framework (BMF) — v0.4.7-alpha
+
+## New in v0.4.7 — optional capped AP refunds
+
+The cap-changing method remains available and unchanged by default. In a fresh disposable solo adventure, enable **AP refund mode** in F10 > House rules, select +1 to +3 and restart. It refunds a verified single-point spend from 2 to 1 back to 2, up to the selected budget per tracked native AP object. It never writes the maximum or permanent maximum. The normal counter remains at most 2, but the target is 3–5 one-point actions. It resets its budget only after a verified 0-to-2 refill; ending a turn with unused AP may therefore withhold later bonuses. Two-point actions and previously elevated AP caps are deliberately not refunded. Existing cap adjustment is ignored in this mode. Bonus 0 is read-only. The opening and subsequent turns, native state copies and game UI remain unverified; this is not a save-repair feature. Do not use a valuable save. The legacy +3 fix is also still awaiting in-game testing.
+
+The standalone guard tests can be run with `dotnet run --project tests/CoreTests/CoreTests.csproj` using the .NET 8 SDK.
 
 Unofficial, source-only developer preview for the Windows/Steam edition of Demeo x Dungeons & Dragons: Battlemarked. This is not endorsed by Resolution Games or Wizards of the Coast. No game assets or loader binaries are included.
 

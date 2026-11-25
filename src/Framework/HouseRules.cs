@@ -21,6 +21,9 @@ internal sealed class HouseRules : BattlemarkedModule
     private ConfigEntry<int> nextBonus;
     private ConfigEntry<bool> nextAdjustExisting;
     private bool adjustExisting;
+    private ConfigEntry<bool> nextRefundMode;
+    private bool refundMode;
+    private int refunds, refundResets, refundElevatedSkipped;
     private int adjustedCaps, elevatedSkipped;
     private int bonus, writing, grants, restores, duplicateRefills, nestedSkipped, unresolved, openingGrants;
     private int nextId;
@@ -28,11 +31,19 @@ internal sealed class HouseRules : BattlemarkedModule
     {
         internal int Id, Grants, Restores, Spent, SpentSinceGrant, BonusCycles;
         internal bool PendingRestore;
+        internal int RefundsThisCycle, Refunds;
     }
     // Key by native stat object, not managed wrapper; distinct native copies remain distinct.
     private readonly Dictionary<IntPtr, HeroState> heroes = new();
     internal static int NextBonus => running == null || running.nextBonus == null ? 0 : Math.Clamp(running.nextBonus.Value, 0, 3);
     internal static bool NextAdjustExisting => running?.nextAdjustExisting?.Value ?? false;
+    internal static bool NextRefundMode => running?.nextRefundMode?.Value ?? false;
+    internal static void ToggleRefundMode()
+    {
+        if (!CanConfigure || running.nextRefundMode == null) return;
+        running.nextRefundMode.Value = !running.nextRefundMode.Value;
+        running.ctx.Config.Save();
+    }
     internal static void ToggleAdjustExisting()
     {
         if (!CanConfigure || running.nextAdjustExisting == null) return;
@@ -53,7 +64,7 @@ internal sealed class HouseRules : BattlemarkedModule
     private DateTime lastWrite;
     private readonly List<string> samples = new();
     internal static string Status => running == null ? "Module not running" : running.status;
-    internal static string Counts => running == null ? "No active module" : $"Grants: {running.grants} | Restores: {running.restores} | Errors: {running.errors}";
+    internal static string Counts => running == null ? "No active module" : $"Grants: {running.grants} | Refunds: {running.refunds} | Errors: {running.errors}";
     private static MethodInfo Exact(Type type, string name, string signature)
     {
         var matches = type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly)
@@ -69,7 +80,10 @@ internal sealed class HouseRules : BattlemarkedModule
         bonus = Math.Clamp(nextBonus.Value, 0, 3);
         nextAdjustExisting = ctx.Config.Bind("HouseRules", "AdjustExistingAP046", false,
             "Opt-in for disposable solo test saves only: treat consistent 3-5 AP caps with allowance 2 as old bonuses. May overwrite legitimate modifiers. Restart to apply.");
-        adjustExisting = nextAdjustExisting.Value;
+        nextRefundMode = ctx.Config.Bind("HouseRules", "RefundMode047", false,
+            "Experimental alternative: refund single paid AP actions without changing max AP. Fresh disposable solo adventures only. Restart to apply.");
+        refundMode = nextRefundMode.Value;
+        adjustExisting = nextAdjustExisting.Value && !refundMode;
         if (!ctx.IsVerifiedBuild(CoreLogicProbe.VerifiedHash)) { status = "Skipped: unverified game fingerprint"; Write(); return; }
         try
         {
@@ -136,7 +150,7 @@ internal sealed class HouseRules : BattlemarkedModule
             ctx.Patches.Patch(teardown, prefix: Hook(nameof(ClearModel)), postfix: Hook(nameof(ClearModel)));
             ctx.Patches.Patch(refill, prefix: Hook(nameof(BeforeRefill)), postfix: Hook(nameof(AfterRefill)));
             ctx.Patches.Patch(spend, prefix: Hook(nameof(BeforeSpend)), postfix: Hook(nameof(AfterSpend)));
-            status = bonus == 0 ? "Read-only AP stat tracing" : $"Experimental +{bonus} AP on refill or first paid action";
+            status = bonus == 0 ? "Read-only AP stat tracing" : refundMode ? $"Experimental +{bonus} AP via capped refunds" : $"Experimental +{bonus} AP on refill or first paid action";
             ctx.Log.LogInfo("BMF house rules: " + status);
         }
         catch (Exception ex)
@@ -155,7 +169,7 @@ internal sealed class HouseRules : BattlemarkedModule
         int pending = heroes.Values.Count(h => h.PendingRestore);
         unresolved += pending;
         if (pending > 0) Sample($"Scope ended: {pending} outstanding cap(s) not restored: {reason}; discard test adventure");
-        foreach (var h in heroes.Values) Sample($"Scope summary stat#{h.Id}: grants={h.Grants} restores={h.Restores} spent={h.Spent} bonusCycles={h.BonusCycles}");
+        foreach (var h in heroes.Values) Sample($"Scope summary stat#{h.Id}: grants={h.Grants} restores={h.Restores} spent={h.Spent} bonusCycles={h.BonusCycles} refunds={h.Refunds} refundBudgetUsed={h.RefundsThisCycle}");
         heroes.Clear();
         dirty = true;
     }
@@ -200,7 +214,8 @@ internal sealed class HouseRules : BattlemarkedModule
         internal object Piece;
         internal HeroState Hero;
         internal string Before, Operation;
-        internal int SpendAmount, BeforeRemaining;
+        internal int SpendAmount, BeforeRemaining, BeforeMax;
+        internal bool NormalBefore;
     }
     private static TraceState Begin(object piece, string operation, bool isSpend)
     {
@@ -217,7 +232,10 @@ internal sealed class HouseRules : BattlemarkedModule
             var h = r.Identify(piece);
             if (!isSpend && h != null && h.PendingRestore && r.Remaining(piece) <= 2)
                 r.RestoreMaximum(piece, h, r.Remaining(piece));
-            return new TraceState { Owner = r, Piece = piece, Hero = h, Operation = operation, Before = r.Snapshot(piece), BeforeRemaining = r.Remaining(piece) };
+            int beforeRemaining = r.Remaining(piece);
+            int beforeMax = r.StatMax(piece);
+            return new TraceState { Owner = r, Piece = piece, Hero = h, Operation = operation, Before = r.Snapshot(piece), BeforeRemaining = beforeRemaining, BeforeMax = beforeMax,
+                NormalBefore = r.refundMode && r.bonus > 0 && beforeMax == 2 && beforeRemaining >= 0 && beforeRemaining <= 2 && r.ValuesMatch(piece, beforeRemaining, 2) };
         }
         catch (Exception ex) { r.Fail("before " + operation, ex); return null; }
     }
@@ -243,6 +261,17 @@ internal sealed class HouseRules : BattlemarkedModule
         try
         {
             var h = __state.Hero;
+            if (r.refundMode)
+            {
+                if (r.Scope(__state.Piece) != "local solo hero" || !ReferenceEquals(r.Identify(__state.Piece), h)) return;
+                // Reset only on an observed, consistent empty-to-full native refill.
+                // A refund itself is never a reset; nested hooks are suppressed.
+                if (ApRefundBudget.CanReset(__state.NormalBefore, __state.BeforeRemaining, r.ValuesMatch(__state.Piece, 2, 2)))
+                {
+                    h.RefundsThisCycle = 0; r.refundResets++; r.Sample($"Refund budget reset stat#{h.Id}");
+                }
+                return;
+            }
             if (r.Remaining(__state.Piece) > __state.BeforeRemaining) h.SpentSinceGrant = 0;
             if (h.PendingRestore || (h.Grants > 0 && __state.BeforeRemaining >= 2)) { r.duplicateRefills++; return; }
             int cap = r.StatMax(__state.Piece);
@@ -271,6 +300,15 @@ internal sealed class HouseRules : BattlemarkedModule
             // Count only a real matching deduction, not merely a true return value.
             if (__state.BeforeRemaining - current != __state.SpendAmount) return;
             int cap = r.StatMax(__state.Piece);
+            if (r.refundMode)
+            {
+                h.Spent += __state.SpendAmount;
+                if (r.bonus == 0) return;
+                if (cap != 2) { r.refundElevatedSkipped++; return; }
+                if (ApRefundBudget.CanRefund(r.bonus, h.RefundsThisCycle, __state.NormalBefore, __state.BeforeRemaining, __state.SpendAmount, current, r.ValuesMatch(__state.Piece, 1, 2)))
+                    r.TryRefund(__state.Piece, h);
+                return;
+            }
             bool opening = r.bonus > 0 && h.Spent == 0 && h.Grants == 0 && !h.PendingRestore &&
                 __state.SpendAmount == 1 && __state.BeforeRemaining == cap && current == cap - 1 &&
                 (cap == 2 || (r.adjustExisting && cap >= 3 && cap <= 5));
@@ -288,6 +326,24 @@ internal sealed class HouseRules : BattlemarkedModule
             if (h.PendingRestore && current <= 2) r.RestoreMaximum(__state.Piece, h, current);
         }
         catch (Exception ex) { r.Fail("AP spend observation", ex); }
+    }
+    private void TryRefund(object piece, HeroState h)
+    {
+        if (!CanConfigure || !refundMode || bonus == 0 || Scope(piece) != "local solo hero" || !ReferenceEquals(Identify(piece), h) || !ValuesMatch(piece, 1, 2)) return;
+        if (h.RefundsThisCycle >= bonus) return;
+        // Reserve the refund before writing; a failed or ambiguous write never retries.
+        h.RefundsThisCycle++;
+        writing++;
+        try
+        {
+            var facade = stats.Invoke(piece, null);
+            bool applied = Set(setStat, facade, 2f);
+            bool verified = ValuesMatch(piece, 2, 2);
+            Sample($"Refund stat#{h.Id} used={h.RefundsThisCycle}/{bonus} applied={applied} verified={verified} | {Snapshot(piece)}");
+            if (!applied || !verified) throw new InvalidOperationException("AP refund not verified; no further writes");
+            h.Refunds++; refunds++;
+        }
+        finally { writing--; }
     }
     private int StatMax(object piece) => (int)getMax.Invoke(stats.Invoke(piece, null), new[] { apType });
     private bool ValuesMatch(object piece, int value, int max)
@@ -376,8 +432,8 @@ internal sealed class HouseRules : BattlemarkedModule
         if (ctx == null) return;
         try
         {
-            var lines = new List<string> { "BMF AP bonus probe (experimental; read-only when bonus=0)", "Framework=" + Framework.Version, "GameVersion=" + ctx.GameVersion, "GameAssemblySHA256=" + ctx.GameAssemblySha256, "Scene=" + scene, "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + status, $"ConfiguredBonus={bonus} NextBonus={nextBonus?.Value ?? 0} Grants={grants} OpeningGrants={openingGrants} AdjustExisting={adjustExisting} NextAdjustExisting={nextAdjustExisting?.Value ?? false} AdjustedCaps={adjustedCaps} ElevatedSkipped={elevatedSkipped} Restores={restores} Pending={heroes.Values.Count(h => h.PendingRestore)} Unresolved={unresolved} DuplicateRefills={duplicateRefills} NestedSkipped={nestedSkipped}", $"Refills={refillCalls} Spends={spendCalls} Samples={samplesTaken} Skipped={skipped} Errors={errors} OtherThread={Interlocked.Read(ref otherThread)}", "Current scope anonymous native AP stat objects (not necessarily distinct heroes):" };
-            foreach (var h in heroes.Values) lines.Add($"stat#{h.Id} grants={h.Grants} restores={h.Restores} spent={h.Spent} bonusCycles={h.BonusCycles} pending={h.PendingRestore}");
+            var lines = new List<string> { "BMF AP bonus probe (experimental; read-only when bonus=0)", "Framework=" + Framework.Version, "GameVersion=" + ctx.GameVersion, "GameAssemblySHA256=" + ctx.GameAssemblySha256, "Scene=" + scene, "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + status, $"ConfiguredBonus={bonus} NextBonus={nextBonus?.Value ?? 0} RefundMode={refundMode} NextRefundMode={nextRefundMode?.Value ?? false} Refunds={refunds} RefundResets={refundResets} RefundElevatedSkipped={refundElevatedSkipped} Grants={grants} OpeningGrants={openingGrants} AdjustExisting={adjustExisting} NextAdjustExisting={nextAdjustExisting?.Value ?? false} AdjustedCaps={adjustedCaps} ElevatedSkipped={elevatedSkipped} Restores={restores} Pending={heroes.Values.Count(h => h.PendingRestore)} Unresolved={unresolved} DuplicateRefills={duplicateRefills} NestedSkipped={nestedSkipped}", $"Refills={refillCalls} Spends={spendCalls} Samples={samplesTaken} Skipped={skipped} Errors={errors} OtherThread={Interlocked.Read(ref otherThread)}", "Current scope anonymous native AP stat objects (not necessarily distinct heroes):" };
+            foreach (var h in heroes.Values) lines.Add($"stat#{h.Id} grants={h.Grants} restores={h.Restores} spent={h.Spent} bonusCycles={h.BonusCycles} refunds={h.Refunds} refundBudgetUsed={h.RefundsThisCycle} pending={h.PendingRestore}");
             lines.Add("Samples (max 250; no player identifiers or raw pointers):");
             lines.AddRange(samples); File.WriteAllLines(Path.Combine(ctx.DataDirectory, "house-rules-probe.txt"), lines); dirty = false; lastWrite = DateTime.UtcNow;
         }

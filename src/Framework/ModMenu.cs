@@ -97,9 +97,11 @@ internal sealed class ModMenu
                 if (GUI.Button(new Rect(x + 188, y + 154, 100, 27), "Disable")) HouseRules.ChangeBonus(-3);
                 GUI.Label(new Rect(x + 12, y + 187, width - 24, 24), HouseRules.Status);
                 GUI.Label(new Rect(x + 12, y + 216, width - 24, 24), HouseRules.Counts);
-                GUI.Label(new Rect(x + 12, y + 245, width - 24, 25), "Restart to apply. Target: " + (2 + HouseRules.NextBonus) + " AP (normal hero).");
-                if (height >= 335 && HouseRules.CanConfigure && GUI.Button(new Rect(x + 12, y + 274, width - 24, 27), "Adjust existing AP caps: " + (HouseRules.NextAdjustExisting ? "ON" : "OFF"))) HouseRules.ToggleAdjustExisting();
-                if (height >= 335) GUI.Label(new Rect(x + 12, y + 302, width - 24, 25), "Existing cap adjustment: disposable test saves only.");
+                GUI.Label(new Rect(x + 12, y + 245, width - 24, 25), "Restart to apply. Target: " + (2 + HouseRules.NextBonus) + (HouseRules.NextRefundMode ? " one-AP actions (max 2)." : " AP (normal hero)."));
+                if (height >= 335 && HouseRules.CanConfigure && !HouseRules.NextRefundMode && GUI.Button(new Rect(x + 12, y + 274, width - 24, 27), "Adjust existing AP caps: " + (HouseRules.NextAdjustExisting ? "ON" : "OFF"))) HouseRules.ToggleAdjustExisting();
+                if (height >= 335) GUI.Label(new Rect(x + 12, y + 302, width - 24, 25), HouseRules.NextRefundMode ? "Refund mode: max remains 2; old elevated caps skipped." : "Existing cap adjustment: disposable test saves only.");
+                if (height >= 365 && HouseRules.CanConfigure && GUI.Button(new Rect(x + 12, y + 330, width - 24, 27), "AP refund mode: " + (HouseRules.NextRefundMode ? "ON" : "OFF"))) HouseRules.ToggleRefundMode();
+                if (height >= 390) GUI.Label(new Rect(x + 12, y + 360, width - 24, 24), "Refund mode: fresh disposable solo adventure; restart.");
                 return;
             }
             if (diagnostics)
