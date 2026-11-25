@@ -1,4 +1,12 @@
-# Battlemarked Mod Framework (BMF) — v0.5.1-alpha
+# Battlemarked Mod Framework (BMF) — v0.5.2-alpha
+
+## New in v0.5.2 — longer health sessions and earlier AP refill recovery
+
+The 0.5.1 user test verified all 24 health writes (five initial applications and 19 refreshes), with all five tracked objects at target on their last observation. The game still removed the temporary modifier 19 times. This version adds an exact, optional `StatsFacade.UpdateModifiers` postfix to refresh after native stat recalculation for already-observed active local heroes. It matches a live facade against a bounded session-local map, rechecks local solo scope, and retains AP observations as fallback if the hook is unavailable. No cached piece wrappers are kept across scope teardown. The temporary bonus is not made permanent and no direct max/current setter is used. Existing baseline/no-stacking/current-HP verification remains unchanged. Replace the 32 lifetime attempts per stat object with a rolling eight writes per five seconds per object. Throttling recovers at a later observation. This is not a guarantee of uninterrupted bonus health: native recalculation may still occur on untracked objects or through other paths; the hook's real execution and effect need testing. The 128 tracked-object limit is retained.
+
+AP refund mode resets on verified same-cap partial-to-full native refills by default. Set `PartialAPRefills052 = false` in the house-rules configuration before restarting to restore the old empty-to-full-only policy. Full-to-full calls are deliberately not reset: the hook alone cannot distinguish a new turn from a duplicate. A native refill is not proven to be a turn boundary. No changes to the bonus grant amount or existing-cap accounting.
+
+Test in a fresh disposable solo adventure, with 125% hero health and +3 AP refund mode. Take damage, complete multiple rounds, end a turn with one AP left and check whether the next round has five one-point actions. Upload hero-health-probe.txt, house-rules-probe.txt and LogOutput.log. Look for RecalcHook=True, RecalcMatched, source=modifier-update, Throttled and PartialRefundResets. Do not use valuable saves.
 
 ## New in v0.5.1 — bounded health refresh
 

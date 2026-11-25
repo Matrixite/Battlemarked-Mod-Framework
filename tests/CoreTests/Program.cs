@@ -44,11 +44,15 @@ Check(!ApRefundBudget.CanRefund(3, 0, 3, true, true, 3, 1, 2, false), "unverifie
 Check(!ApRefundBudget.CanRefund(3, 0, 3, true, true, 1, 1, 0, true), "no refund after empty");
 Check(!ApRefundBudget.CanRefund(3, 0, 3, true, true, 3, 2, 1, true), "two-point spend not refunded");
 Check(!ApRefundBudget.CanRefund(3, 0, 3, true, true, 3, 0, 3, true), "free action not refunded");
-Check(ApRefundBudget.CanReset(true, 0, true), "empty to full refill resets");
-Check(!ApRefundBudget.CanReset(true, 1, true), "partial refill does not reset");
-Check(!ApRefundBudget.CanReset(true, 3, true), "duplicate full refill does not reset");
-Check(!ApRefundBudget.CanReset(false, 0, true), "unverified empty does not reset");
-Check(!ApRefundBudget.CanReset(true, 0, false), "unverified full does not reset");
+Check(ApRefundBudget.CanReset(true, 0, 3, true, true), "empty to full refill resets");
+Check(ApRefundBudget.CanReset(true, 1, 3, true, true), "partial refill resets when enabled");
+Check(ApRefundBudget.CanReset(true, 2, 3, true, true), "near-full refill resets when enabled");
+Check(!ApRefundBudget.CanReset(true, 1, 3, true, false), "partial refill disabled fallback");
+Check(ApRefundBudget.CanReset(true, 0, 3, true, false), "empty reset retained in fallback");
+Check(!ApRefundBudget.CanReset(true, 3, 3, true, true), "duplicate full refill does not reset");
+Check(!ApRefundBudget.CanReset(false, 0, 3, true, true), "unverified empty does not reset");
+Check(!ApRefundBudget.CanReset(true, 0, 3, false, true), "unverified full does not reset");
+Check(!ApRefundBudget.CanReset(true, -1, 3, true, true), "invalid negative remaining rejected");
 Console.WriteLine("PASS: 32 AP refund cap/bonus/opt-in combinations and guard scenarios.");
 
 foreach (int hp in new[] { 1, 3, 7, 10, 11, 30, 10000 })
@@ -77,3 +81,16 @@ Check(!HealthBudget.CanRefresh(0, 16, 0, 16, 16, 16, 0, 16, 16, 0), "zero curren
 Check(HealthBudget.CanRefresh(24, 25, 24, 25, 25, 22, 1, 25, 22, 1), "existing baseline modifiers preserved");
 Check(!HealthBudget.CanRefresh(24, 25, 24, 25, 25, 22, 2, 25, 22, 1), "additional native modifier skipped");
 Console.WriteLine("PASS: health refresh and stacking guards.");
+
+var rate = new HealthRefreshWindow();
+for (int i = 0; i < 8; i++) Check(rate.TryReserve(1000), "initial burst accepted");
+Check(!rate.TryReserve(1001), "burst bounded");
+Check(!rate.TryReserve(5999), "rolling window still full");
+Check(rate.TryReserve(6000), "expired slots recover");
+var longAdventure = new HealthRefreshWindow();
+for (int i = 0; i < 100; i++) Check(longAdventure.TryReserve(i * 1000L), "no lifetime refresh ceiling");
+var stagger = new HealthRefreshWindow();
+for (int i = 0; i < 8; i++) Check(stagger.TryReserve(i * 100), "staggered burst accepted");
+Check(stagger.TryReserve(5000), "oldest slot expires");
+Check(!stagger.TryReserve(5000), "only oldest slot expires");
+Console.WriteLine("PASS: rolling health refresh limits and long adventure scenarios.");

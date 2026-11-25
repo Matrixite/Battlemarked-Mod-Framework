@@ -29,7 +29,8 @@ internal sealed class HouseRules : BattlemarkedModule
     private bool adjustExisting;
     private ConfigEntry<bool> nextRefundMode;
     private bool refundMode;
-    private int refunds, refundResets, refundElevatedSkipped;
+    private int refunds, refundResets, refundElevatedSkipped, partialRefundResets;
+    private bool partialRefills;
     private int adjustedCaps, elevatedSkipped;
     private int bonus, writing, grants, restores, duplicateRefills, nestedSkipped, unresolved, openingGrants;
     private int nextId;
@@ -158,6 +159,25 @@ internal sealed class HouseRules : BattlemarkedModule
             ctx.Patches.Patch(teardown, prefix: Hook(nameof(ClearModel)), postfix: Hook(nameof(ClearModel)));
             ctx.Patches.Patch(refill, prefix: Hook(nameof(BeforeRefill)), postfix: Hook(nameof(AfterRefill)));
             ctx.Patches.Patch(spend, prefix: Hook(nameof(BeforeSpend)), postfix: Hook(nameof(AfterSpend)));
+            partialRefills = ctx.Config.Bind("HouseRules", "PartialAPRefills052", true,
+                "Reset refund budget on a verified same-cap partial-to-full native refill. Full-to-full remains guarded. Restart to apply.").Value;
+            if (health != null && health.Enabled)
+            {
+                try
+                {
+                    var recalc = Exact(facade, "UpdateModifiers", "2002011512210112831802");
+                    if (recalc.IsStatic || recalc.ReturnType != typeof(void) || recalc.GetParameters().Length != 2 || recalc.GetParameters()[1].ParameterType != typeof(bool))
+                        throw new InvalidOperationException("Unexpected native modifier recalculation signature");
+                    ctx.Patches.Patch(recalc, postfix: Hook(nameof(AfterModifierUpdate)));
+                    health.SetRecalculationStatus(true, "StatsFacade.UpdateModifiers postfix attached");
+                    ctx.Log.LogInfo("BMF health recalculation hook attached");
+                }
+                catch (Exception ex)
+                {
+                    health.SetRecalculationStatus(false, "Unavailable; AP observations retained: " + ex.Message);
+                    ctx.Log.LogWarning("Health recalculation hook unavailable: " + ex.Message);
+                }
+            }
             status = bonus == 0 ? "Read-only AP stat tracing" : refundMode ? $"Experimental +{bonus} AP via capped refunds" : $"Experimental +{bonus} AP on refill or first paid action";
             ctx.Log.LogInfo("BMF house rules: " + status);
         }
@@ -174,12 +194,29 @@ internal sealed class HouseRules : BattlemarkedModule
     private static void ClearModel() { var r = running; if (r != null && Environment.CurrentManagedThreadId == r.mainThread) { r.LoseScope("session teardown"); model = null; } }
     private void LoseScope(string reason)
     {
+        health?.ClearScope();
         int pending = heroes.Values.Count(h => h.PendingRestore);
         unresolved += pending;
         if (pending > 0) Sample($"Scope ended: {pending} outstanding cap(s) not restored: {reason}; discard test adventure");
         foreach (var h in heroes.Values) Sample($"Scope summary stat#{h.Id}: grants={h.Grants} restores={h.Restores} spent={h.Spent} bonusCycles={h.BonusCycles} refunds={h.Refunds} refundBudgetUsed={h.RefundsThisCycle}");
         heroes.Clear();
         dirty = true;
+    }
+    private static void AfterModifierUpdate(object __instance)
+    {
+        var r = running;
+        if (r == null || r.faulted || r.writing != 0 || r.health == null || !r.health.Enabled ||
+            Environment.CurrentManagedThreadId != r.mainThread || model == null) return;
+        try
+        {
+            // Only a live facade already observed for a local hero may trigger a write.
+            var piece = r.health.MatchRecalculatedFacade(__instance);
+            if (piece == null || r.Scope(piece) != "local solo hero") return;
+            r.writing++;
+            try { r.health.Observe(piece, source: "modifier-update"); }
+            finally { r.writing--; }
+        }
+        catch (Exception ex) { r.ctx.Log.LogWarning("Health recalculation observation skipped: " + ex.Message); }
     }
     private bool Flag(MethodInfo method, object target, params object[] args) => method.Invoke(target, args) is bool b && b;
     private int Allowance(object piece) => (int)allowance.Invoke(piece, null);
@@ -292,12 +329,14 @@ internal sealed class HouseRules : BattlemarkedModule
             if (r.refundMode)
             {
                 if (r.Scope(__state.Piece) != "local solo hero" || !ReferenceEquals(r.Identify(__state.Piece), h)) return;
-                // Reset only on an observed, consistent empty-to-full native refill.
+                // Reset on a verified actual same-cap increase to full, never a full-to-full call.
                 // A refund itself is never a reset; nested hooks are suppressed.
                 int refillCap = __state.BeforeMax;
-                if (ApRefundBudget.CanReset(__state.VerifiedBefore, __state.BeforeRemaining, r.ValuesMatch(__state.Piece, refillCap, refillCap)))
+                if (ApRefundBudget.CanReset(__state.VerifiedBefore, __state.BeforeRemaining, refillCap, r.ValuesMatch(__state.Piece, refillCap, refillCap), r.partialRefills))
                 {
-                    h.RefundsThisCycle = 0; h.RefundCycleCap = refillCap; r.refundResets++; r.Sample($"Refund budget reset stat#{h.Id} cap={refillCap} budget={ApRefundBudget.Limit(r.bonus, refillCap, r.adjustExisting)}");
+                    h.RefundsThisCycle = 0; h.RefundCycleCap = refillCap; r.refundResets++;
+                    if (__state.BeforeRemaining > 0) r.partialRefundResets++;
+                    r.Sample($"Refund budget reset stat#{h.Id} before={__state.BeforeRemaining} cap={refillCap} budget={ApRefundBudget.Limit(r.bonus, refillCap, r.adjustExisting)}");
                 }
                 return;
             }
@@ -464,7 +503,7 @@ internal sealed class HouseRules : BattlemarkedModule
         if (ctx == null) return;
         try
         {
-            var lines = new List<string> { "BMF AP bonus probe (experimental; read-only when bonus=0)", "Framework=" + Framework.Version, "GameVersion=" + ctx.GameVersion, "GameAssemblySHA256=" + ctx.GameAssemblySha256, "Scene=" + scene, "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + status, $"ConfiguredBonus={bonus} NextBonus={nextBonus?.Value ?? 0} RefundMode={refundMode} NextRefundMode={nextRefundMode?.Value ?? false} Refunds={refunds} RefundResets={refundResets} RefundElevatedSkipped={refundElevatedSkipped} Grants={grants} OpeningGrants={openingGrants} AdjustExisting={adjustExisting} NextAdjustExisting={nextAdjustExisting?.Value ?? false} AdjustedCaps={adjustedCaps} ElevatedSkipped={elevatedSkipped} Restores={restores} Pending={heroes.Values.Count(h => h.PendingRestore)} Unresolved={unresolved} DuplicateRefills={duplicateRefills} NestedSkipped={nestedSkipped}", $"Refills={refillCalls} Spends={spendCalls} Samples={samplesTaken} Skipped={skipped} Errors={errors} OtherThread={Interlocked.Read(ref otherThread)}", "Current scope anonymous native AP stat objects (not necessarily distinct heroes):" };
+            var lines = new List<string> { "BMF AP bonus probe (experimental; read-only when bonus=0)", "Framework=" + Framework.Version, "GameVersion=" + ctx.GameVersion, "GameAssemblySHA256=" + ctx.GameAssemblySha256, "Scene=" + scene, "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + status, $"ConfiguredBonus={bonus} NextBonus={nextBonus?.Value ?? 0} RefundMode={refundMode} NextRefundMode={nextRefundMode?.Value ?? false} Refunds={refunds} RefundResets={refundResets} PartialRefundResets={partialRefundResets} PartialRefills={partialRefills} RefundElevatedSkipped={refundElevatedSkipped} Grants={grants} OpeningGrants={openingGrants} AdjustExisting={adjustExisting} NextAdjustExisting={nextAdjustExisting?.Value ?? false} AdjustedCaps={adjustedCaps} ElevatedSkipped={elevatedSkipped} Restores={restores} Pending={heroes.Values.Count(h => h.PendingRestore)} Unresolved={unresolved} DuplicateRefills={duplicateRefills} NestedSkipped={nestedSkipped}", $"Refills={refillCalls} Spends={spendCalls} Samples={samplesTaken} Skipped={skipped} Errors={errors} OtherThread={Interlocked.Read(ref otherThread)}", "Current scope anonymous native AP stat objects (not necessarily distinct heroes):" };
             foreach (var h in heroes.Values) lines.Add($"stat#{h.Id} grants={h.Grants} restores={h.Restores} spent={h.Spent} bonusCycles={h.BonusCycles} refunds={h.Refunds} refundBudgetUsed={h.RefundsThisCycle} refundCycleCap={h.RefundCycleCap} pending={h.PendingRestore}");
             lines.Add("Samples (max 250; no player identifiers or raw pointers):");
             lines.AddRange(samples); File.WriteAllLines(Path.Combine(ctx.DataDirectory, "house-rules-probe.txt"), lines); dirty = false; lastWrite = DateTime.UtcNow;

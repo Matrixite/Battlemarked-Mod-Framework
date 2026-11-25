@@ -16,6 +16,7 @@ internal static class ApRefundBudget
         => used >= 0 && used < Limit(bonus, cap, adjustExisting) && verifiedBefore && verifiedAfter
            && before == cap && amount == 1 && after == cap - 1;
 
-    internal static bool CanReset(bool verifiedBefore, int before, bool verifiedFullAfter)
-        => verifiedBefore && before == 0 && verifiedFullAfter;
+    internal static bool CanReset(bool verifiedBefore, int before, int cap, bool verifiedFullAfter, bool partialRefills)
+        => verifiedBefore && verifiedFullAfter && cap >= 2 && cap <= 5
+           && before >= 0 && before < cap && (before == 0 || partialRefills);
 }

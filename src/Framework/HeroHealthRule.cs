@@ -11,22 +11,43 @@ internal sealed class HeroHealthRule
     private readonly ConfigEntry<int> nextPercent;
     private readonly int percent;
     private MethodInfo usesHealth, isDowned, stats, getObject, getStat, getMax, value, max, permanent, raw, modifiers, add;
-    private PropertyInfo nativePointer, count;
+    private PropertyInfo nativePointer, facadePointer, count;
     private ConstructorInfo modifierCtor;
     private object healthType, additive, temporary;
     private bool ready, faulted, dirty = true;
-    private int observations, attempts, applied, errors, lost, refreshed, nextId;
-    private const int MaxAttemptsPerObject = 32;
+    private int observations, attempts, applied, errors, lost, refreshed, nextId, throttled, recalculations, matchedRecalculations;
+    private bool recalcHookAttached;
+    private string recalcStatus = "not attempted";
     private DateTime lastWrite;
     private readonly List<string> samples = new();
     private sealed class Entry
     {
         internal int Id, Target, Base, BaseRaw, BaseModifiers, Attempts, Refreshes, LastCurrent = -1, LastMax = -1;
         internal bool Attempted, Applied, Lost;
+        internal readonly HealthRefreshWindow Rate = new();
     }
     // Retain baseline and attempts per native health object for the process lifetime.
     // Never stack on a changed baseline; reused addresses may be conservatively skipped.
     private readonly Dictionary<IntPtr, Entry> entries = new();
+    // Only retain observed active-hero wrappers within the current local session.
+    // Never dereference a stored wrapper unless a live recalculation matched its facade.
+    private readonly Dictionary<IntPtr, object> trackedFacades = new();
+    internal bool Enabled => Available && percent > 100;
+    internal void SetRecalculationStatus(bool attached, string status)
+    { recalcHookAttached = attached; recalcStatus = status; dirty = true; }
+    internal void ClearScope()
+    { trackedFacades.Clear(); dirty = true; }
+    internal object MatchRecalculatedFacade(object facade)
+    {
+        if (!Enabled || facade == null || facadePointer == null) return null;
+        recalculations++; dirty = true;
+        var key = (IntPtr)facadePointer.GetValue(facade);
+        if (key == IntPtr.Zero || !trackedFacades.TryGetValue(key, out var piece)) return null;
+        var live = stats.Invoke(piece, null);
+        if (live == null || (IntPtr)facadePointer.GetValue(live) != key) return null;
+        matchedRecalculations++;
+        return piece;
+    }
     internal int NextPercent => HealthBudget.Normalize(nextPercent.Value);
     internal bool Available => ready && !faulted;
     internal string Status => !ready ? "Health metadata unavailable" : faulted ? "Health rule stopped; see report" : percent == 100 ? "Normal health (read-only)" : $"Active: {percent}% max HP (temporary)";
@@ -90,6 +111,8 @@ internal sealed class HeroHealthRule
             additive = VerifiedEnum(args[2].ParameterType, "AdditionAndSubtraction", 0);
             temporary = VerifiedEnum(args[3].ParameterType, "Temporary", 0);
             nativePointer = stat.GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance);
+            facadePointer = facade.GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance);
+            if (facadePointer?.PropertyType != typeof(IntPtr) || !facadePointer.CanRead) facadePointer = null;
             count = modifiers.ReturnType.GetProperty("Count", BindingFlags.Public | BindingFlags.Instance);
             if (nativePointer == null || nativePointer.PropertyType != typeof(IntPtr) || !nativePointer.CanRead
                 || count == null || count.PropertyType != typeof(int) || !count.CanRead)
@@ -111,7 +134,7 @@ internal sealed class HeroHealthRule
     }
     private string Snapshot(object facade, object stat) =>
         $"current={I(getStat, facade)} max={I(getMax, facade)} objectValue={F(value, stat)} objectMax={F(max, stat)} permanentMax={F(permanent, stat)} rawMax={F(raw, stat)} modifiers={ModifierCount(stat)}";
-    internal void Observe(object piece, bool allowWrite = true)
+    internal void Observe(object piece, bool allowWrite = true, string source = "AP")
     {
         if (!Available) return;
         try
@@ -123,6 +146,12 @@ internal sealed class HeroHealthRule
             if (stat == null) return;
             var key = (IntPtr)nativePointer.GetValue(stat);
             if (key == IntPtr.Zero) return;
+            if (Enabled && facadePointer != null && source == "AP")
+            {
+                var facadeKey = (IntPtr)facadePointer.GetValue(facade);
+                if (facadeKey != IntPtr.Zero && (trackedFacades.ContainsKey(facadeKey) || trackedFacades.Count < 128))
+                    trackedFacades[facadeKey] = piece;
+            }
             if (!entries.TryGetValue(key, out var e))
             {
                 if (entries.Count >= 128) return;
@@ -154,7 +183,7 @@ internal sealed class HeroHealthRule
                     return;
                 }
             }
-            if (percent == 100 || !allowWrite || e.Attempts >= MaxAttemptsPerObject) return;
+            if (percent == 100 || !allowWrite) return;
             bool refresh = e.Attempted;
             if (refresh)
             {
@@ -171,8 +200,11 @@ internal sealed class HeroHealthRule
                 if (target <= effectiveMax) return;
                 e.Base = effectiveMax; e.Target = target; e.BaseRaw = (int)rawMax; e.BaseModifiers = modifierCount;
             }
+            // No lifetime attempt ceiling. A rolling per-object rate limit prevents a
+            // recalculation loop from flooding native writes; a later observation can retry.
+            if (!e.Rate.TryReserve(Environment.TickCount64)) { throttled++; dirty = true; return; }
             e.Attempted = true; e.Attempts++; attempts++;
-            Sample($"health#{e.Id} {(refresh ? "refresh" : "attempt")} target={e.Target} attempt={e.Attempts}/{MaxAttemptsPerObject} | before {Snapshot(facade, stat)}");
+            Sample($"health#{e.Id} {(refresh ? "refresh" : "attempt")} source={source} target={e.Target} attempt={e.Attempts} | before {Snapshot(facade, stat)}");
             object modifier = modifierCtor.Invoke(new object[] { healthType, (float)(e.Target - e.Base), additive, temporary });
             add.Invoke(stat, new[] { modifier });
             int afterCurrent = I(getStat, facade);
@@ -206,7 +238,8 @@ internal sealed class HeroHealthRule
             var lines = new List<string> { "BMF hero maximum health probe (temporary modifier experiment)",
                 "Framework=" + Framework.Version, "GameVersion=" + ctx.GameVersion, "GameAssemblySHA256=" + ctx.GameAssemblySha256,
                 "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + Status,
-                $"ConfiguredPercent={percent} NextPercent={NextPercent} Observations={observations} Attempts={attempts} Applied={applied} Refreshed={refreshed} Lost={lost} Errors={errors}",
+                $"ConfiguredPercent={percent} NextPercent={NextPercent} Observations={observations} Attempts={attempts} Applied={applied} Refreshed={refreshed} Lost={lost} Throttled={throttled} RecalcHook={recalcHookAttached} RecalcCalls={recalculations} RecalcMatched={matchedRecalculations} Errors={errors}",
+                "Recalculation hook: " + recalcStatus,
                 "Anonymous native health stat objects; not necessarily distinct heroes. No direct current/max setter." };
             foreach (var e in entries.Values) lines.Add($"health#{e.Id} attempted={e.Attempted} applied={e.Applied} lost={e.Lost} baseline={e.Base} baselineRaw={e.BaseRaw} baselineModifiers={e.BaseModifiers} target={e.Target} attempts={e.Attempts} refreshes={e.Refreshes} lastCurrent={e.LastCurrent} lastMax={e.LastMax}");
             lines.AddRange(samples);

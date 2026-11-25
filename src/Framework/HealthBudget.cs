@@ -31,3 +31,19 @@ internal static class HealthBudget
            && effectiveMax == baseMax && objectMax == baseMax && permanentMax == baseMax
            && rawMax == baseRaw && modifierCount == baseModifiers;
 }
+
+// A rolling window, not a lifetime maximum. All access is on the main thread.
+// Reserve only immediately before a verified write; failed writes still count.
+internal sealed class HealthRefreshWindow
+{
+    internal const int Maximum = 8;
+    internal const long WindowMs = 5000;
+    private readonly Queue<long> attempts = new();
+    internal bool TryReserve(long now)
+    {
+        while (attempts.Count != 0 && now - attempts.Peek() >= WindowMs) attempts.Dequeue();
+        if (attempts.Count >= Maximum) return false;
+        attempts.Enqueue(now);
+        return true;
+    }
+}
