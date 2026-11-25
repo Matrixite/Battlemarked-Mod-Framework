@@ -10,6 +10,13 @@ internal sealed class HeroHealthRule
     private readonly ModuleContext ctx;
     private readonly ConfigEntry<int> nextPercent;
     private readonly int percent;
+    private readonly ConfigEntry<bool> nextComputed;
+    private readonly bool computedMode;
+    private bool computedHook, suppressComputed;
+    private long computedHits;
+    private int computedVerified, computedRejected;
+    private string computedStatus = "not attempted";
+    private readonly Dictionary<IntPtr, object> computedPieces = new();
     private MethodInfo usesHealth, isDowned, stats, getObject, getStat, getMax, value, max, permanent, raw, modifiers, add;
     private PropertyInfo nativePointer, facadePointer, count;
     private ConstructorInfo modifierCtor;
@@ -33,10 +40,14 @@ internal sealed class HeroHealthRule
     // Never dereference a stored wrapper unless a live recalculation matched its facade.
     private readonly Dictionary<IntPtr, object> trackedFacades = new();
     internal bool Enabled => Available && percent > 100;
+    internal bool ComputedMode => computedMode;
+    internal bool NextComputedMode => nextComputed.Value;
+    internal void ToggleComputedMode() { nextComputed.Value = !nextComputed.Value; ctx.Config.Save(); dirty = true; }
+    internal void SetComputedHook(bool attached, string detail) { computedHook = attached; computedStatus = detail; dirty = true; }
     internal void SetRecalculationStatus(bool attached, string status)
     { recalcHookAttached = attached; recalcStatus = status; dirty = true; }
     internal void ClearScope()
-    { trackedFacades.Clear(); dirty = true; }
+    { trackedFacades.Clear(); computedPieces.Clear(); dirty = true; }
     internal object MatchRecalculatedFacade(object facade)
     {
         if (!Enabled || facade == null || facadePointer == null) return null;
@@ -50,8 +61,8 @@ internal sealed class HeroHealthRule
     }
     internal int NextPercent => HealthBudget.Normalize(nextPercent.Value);
     internal bool Available => ready && !faulted;
-    internal string Status => !ready ? "Health metadata unavailable" : faulted ? "Health rule stopped; see report" : percent == 100 ? "Normal health (read-only)" : $"Active: {percent}% max HP (temporary)";
-    internal string Counts => $"Applied: {applied} | Refreshed: {refreshed} | Lost: {lost} | Errors: {errors}";
+    internal string Status => !ready ? "Health metadata unavailable" : faulted ? "Health rule stopped; see report" : percent == 100 ? "Normal health (read-only)" : $"Active: {percent}% max HP ({(computedMode ? (computedHook ? "computed" : "hook unavailable") : "temporary")})";
+    internal string Counts => computedMode ? $"Verified: {computedVerified} | Getter hits: {computedHits} | Errors: {errors}" : $"Applied: {applied} | Refreshed: {refreshed} | Lost: {lost} | Errors: {errors}";
     internal void ChangePercent(int delta)
     {
         if (!Available) return;
@@ -81,6 +92,9 @@ internal sealed class HeroHealthRule
         nextPercent = ctx.Config.Bind("HouseRules", "HeroMaxHealth050", 100,
             "Experimental max health 100/125/150/175/200%; temporary modifier; restart; fresh disposable local solo adventures only.");
         percent = NextPercent;
+        nextComputed = ctx.Config.Bind("HouseRules", "ComputedHealth053", true,
+            "Experimental computed max HP; no modifier writes. False selects legacy temporary mode. Restart; disposable local solo only.");
+        computedMode = nextComputed.Value;
         try
         {
             if (enumType.FullName != "Jade.GameModel.Stats+Type") throw new InvalidOperationException("Unexpected stats enum");
@@ -134,6 +148,61 @@ internal sealed class HeroHealthRule
     }
     private string Snapshot(object facade, object stat) =>
         $"current={I(getStat, facade)} max={I(getMax, facade)} objectValue={F(value, stat)} objectMax={F(max, stat)} permanentMax={F(permanent, stat)} rawMax={F(raw, stat)} modifiers={ModifierCount(stat)}";
+    // The native getter result is the input; this mode never inserts a stat modifier.
+    internal object ComputedPiece(object stat)
+    {
+        if (!Enabled || !computedMode || !computedHook || suppressComputed || stat == null) return null;
+        var key = (IntPtr)nativePointer.GetValue(stat);
+        return key != IntPtr.Zero && computedPieces.TryGetValue(key, out var piece) ? piece : null;
+    }
+    internal bool IsLiveHealthStat(object piece, object stat)
+    {
+        if (usesHealth.Invoke(piece, null) is not true || isDowned.Invoke(piece, null) is not false) return false;
+        var facade = stats.Invoke(piece, null);
+        if (facade == null) return false;
+        var live = getObject.Invoke(facade, new[] { healthType });
+        return live != null && (IntPtr)nativePointer.GetValue(live) == (IntPtr)nativePointer.GetValue(stat);
+    }
+    internal float ScaleNativeMax(float nativeMax)
+    {
+        float result = HealthBudget.ComputedTarget(nativeMax, percent);
+        if (result != nativeMax) { computedHits++; dirty = true; }
+        return result;
+    }
+    private void ObserveComputed(object piece, object facade, object stat, IntPtr key, Entry e, bool allowWrite)
+    {
+        if (!Enabled || !computedHook) return;
+        // Bypass our own getter hook only during the native-baseline measurement.
+        int nativeMax; float nativeObjectMax;
+        suppressComputed = true;
+        try { nativeMax = I(getMax, facade); nativeObjectMax = F(max, stat); }
+        finally { suppressComputed = false; }
+        if (nativeMax != nativeObjectMax || HealthBudget.ComputedTarget(nativeObjectMax, percent) <= nativeObjectMax)
+        { computedPieces.Remove(key); return; }
+        if (!computedPieces.ContainsKey(key))
+        {
+            if (!allowWrite || computedPieces.Count >= 128) return;
+            computedPieces[key] = piece;
+        }
+        else computedPieces[key] = piece;
+        int target = (int)HealthBudget.ComputedTarget(nativeObjectMax, percent);
+        int current = I(getStat, facade), visibleMax = I(getMax, facade);
+        float visibleObjectMax = F(max, stat);
+        if (visibleMax != target || visibleObjectMax != target)
+        {
+            computedPieces.Remove(key); computedRejected++; dirty = true;
+            Sample($"health#{e.Id} computed getter not propagated: native={nativeMax} facade={visibleMax} objectMax={visibleObjectMax} target={target}; removed registration");
+            // Stop rather than repeatedly patching an unverified native path.
+            faulted = true; errors++; computedPieces.Clear();
+            return;
+        }
+        if (!e.Applied) { e.Applied = true; computedVerified++; }
+        if (e.LastCurrent != current || e.LastMax != visibleMax || e.Base != nativeMax)
+        {
+            Sample($"health#{e.Id} computed verified=True nativeMax={nativeMax} target={target} current={current} permanentMax={F(permanent, stat)} rawMax={F(raw, stat)} modifiers={ModifierCount(stat)}");
+            e.Base = nativeMax; e.Target = target; e.LastCurrent = current; e.LastMax = visibleMax;
+        }
+    }
     internal void Observe(object piece, bool allowWrite = true, string source = "AP")
     {
         if (!Available) return;
@@ -146,7 +215,7 @@ internal sealed class HeroHealthRule
             if (stat == null) return;
             var key = (IntPtr)nativePointer.GetValue(stat);
             if (key == IntPtr.Zero) return;
-            if (Enabled && facadePointer != null && source == "AP")
+            if (Enabled && !computedMode && facadePointer != null && source == "AP")
             {
                 var facadeKey = (IntPtr)facadePointer.GetValue(facade);
                 if (facadeKey != IntPtr.Zero && (trackedFacades.ContainsKey(facadeKey) || trackedFacades.Count < 128))
@@ -159,6 +228,7 @@ internal sealed class HeroHealthRule
                 entries.Add(key, e);
             }
             observations++;
+            if (computedMode && percent > 100) { ObserveComputed(piece, facade, stat, key, e, allowWrite); return; }
             int current = I(getStat, facade), effectiveMax = I(getMax, facade);
             if (current != e.LastCurrent || effectiveMax != e.LastMax)
             {
@@ -221,7 +291,7 @@ internal sealed class HeroHealthRule
     }
     private void Stop(string stage, Exception ex)
     {
-        faulted = true; errors++;
+        faulted = true; computedPieces.Clear(); errors++;
         Sample($"Stopped: {stage}: {ex.GetType().Name}: {ex.Message}");
         ctx.Log.LogWarning("BMF health rule stopped: " + stage + ": " + ex.Message);
     }
@@ -235,11 +305,11 @@ internal sealed class HeroHealthRule
     {
         try
         {
-            var lines = new List<string> { "BMF hero maximum health probe (temporary modifier experiment)",
+            var lines = new List<string> { "BMF hero maximum health probe (computed or temporary mode)",
                 "Framework=" + Framework.Version, "GameVersion=" + ctx.GameVersion, "GameAssemblySHA256=" + ctx.GameAssemblySha256,
                 "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + Status,
-                $"ConfiguredPercent={percent} NextPercent={NextPercent} Observations={observations} Attempts={attempts} Applied={applied} Refreshed={refreshed} Lost={lost} Throttled={throttled} RecalcHook={recalcHookAttached} RecalcCalls={recalculations} RecalcMatched={matchedRecalculations} Errors={errors}",
-                "Recalculation hook: " + recalcStatus,
+                $"ConfiguredPercent={percent} NextPercent={NextPercent} ComputedMode={computedMode} NextComputedMode={NextComputedMode} ComputedHook={computedHook} ComputedTracked={computedPieces.Count} ComputedVerified={computedVerified} ComputedHits={computedHits} ComputedRejected={computedRejected} Observations={observations} Attempts={attempts} Applied={applied} Refreshed={refreshed} Lost={lost} Throttled={throttled} RecalcHook={recalcHookAttached} RecalcCalls={recalculations} RecalcMatched={matchedRecalculations} Errors={errors}",
+                "Computed hook: " + computedStatus, "Recalculation hook: " + recalcStatus,
                 "Anonymous native health stat objects; not necessarily distinct heroes. No direct current/max setter." };
             foreach (var e in entries.Values) lines.Add($"health#{e.Id} attempted={e.Attempted} applied={e.Applied} lost={e.Lost} baseline={e.Base} baselineRaw={e.BaseRaw} baselineModifiers={e.BaseModifiers} target={e.Target} attempts={e.Attempts} refreshes={e.Refreshes} lastCurrent={e.LastCurrent} lastMax={e.LastMax}");
             lines.AddRange(samples);

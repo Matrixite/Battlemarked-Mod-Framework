@@ -1,4 +1,12 @@
-# Battlemarked Mod Framework (BMF) — v0.5.2-alpha
+# Battlemarked Mod Framework (BMF) — v0.5.3-alpha
+
+## New in v0.5.3 — computed health trial
+
+The v0.5.2 logs verified the partial AP reset (one remaining AP refilled to three and five paid actions followed). AP code is unchanged. Health recalculation repeatedly removed the independent temporary modifier: 61 losses, 58 refreshes, ten throttles. The supplied assembly metadata shows StatsFacade.UpdateModifiers receives a status-effect list, so adding a standalone modifier after each recalculation is not a durable approach.
+
+New **Computed health** option (on by default, 100% health remains disabled/read-only). When enabled, no native health modifiers or HP setters are used. A scoped postfix of Stat.get_Max scales the original integral native maximum by the chosen percentage, rounded up, for a health object already observed on an active local solo hero. The live object and session are checked per intercepted getter, with recursion suppression. The native result is measured with the hook suppressed, and both the facade and object maximum must report the target or the rule stops. Registration is session-scoped and cleared at teardown. The legacy temporary mode is retained behind the toggle; it is not used simultaneously.
+
+This is a runtime experiment, not a confirmed fix for gameplay. Native IL2CPP internal calls may bypass a detour, and current HP may be clamped by other paths. Computed max may be observed only by some consumers. Use a fresh disposable solo adventure, 125% health, Computed health ON, restart, move each hero, heal a hero above its original maximum, take damage and complete rounds. Verify actual current HP, not just UI maximum. Upload hero-health-probe.txt, house-rules-probe.txt and LogOutput.log. Look for ComputedHook=True, ComputedVerified, ComputedHits, ComputedRejected=0 and Attempts=0. If it fails, 100% disables the rule; legacy mode remains experimental. Do not use valuable saves.
 
 ## New in v0.5.2 — longer health sessions and earlier AP refill recovery
 

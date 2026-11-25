@@ -10,6 +10,11 @@ internal static class HealthBudget
         return (baseMax * Normalize(percent) + 99) / 100;
     }
 
+    // Always scale the native (unpatched) getter result, not a previous computed result.
+    internal static float ComputedTarget(float nativeMax, int percent)
+        => float.IsFinite(nativeMax) && nativeMax > 0 && nativeMax <= 10000 && nativeMax == MathF.Truncate(nativeMax)
+            ? Target((int)nativeMax, percent) : nativeMax;
+
     // Initial application requires full HP and no net temporary max change.
     // A positive, integral raw maximum plus a consistent permanent maximum can
     // include existing native permanent modifiers; their count is preserved.

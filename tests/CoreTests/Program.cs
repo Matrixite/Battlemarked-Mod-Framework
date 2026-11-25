@@ -94,3 +94,13 @@ for (int i = 0; i < 8; i++) Check(stagger.TryReserve(i * 100), "staggered burst 
 Check(stagger.TryReserve(5000), "oldest slot expires");
 Check(!stagger.TryReserve(5000), "only oldest slot expires");
 Console.WriteLine("PASS: rolling health refresh limits and long adventure scenarios.");
+
+foreach (int hp in new[] { 1, 16, 18, 22, 25, 10000 })
+foreach (int pct in new[] { 100, 125, 150, 175, 200 })
+    Check(HealthBudget.ComputedTarget(hp, pct) == Math.Ceiling(hp * (double)pct / 100), "computed native max");
+Check(HealthBudget.ComputedTarget(16.5f, 125) == 16.5f, "fractional max unchanged");
+Check(HealthBudget.ComputedTarget(0, 125) == 0, "zero max unchanged");
+Check(HealthBudget.ComputedTarget(10001, 125) == 10001, "oversize max unchanged");
+Check(float.IsNaN(HealthBudget.ComputedTarget(float.NaN, 125)), "invalid max unchanged");
+Check(HealthBudget.ComputedTarget(16, 125) == 20 && HealthBudget.ComputedTarget(16, 125) == 20, "repeat native getter does not stack");
+Console.WriteLine("PASS: computed health target guards.");
