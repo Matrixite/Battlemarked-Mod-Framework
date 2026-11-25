@@ -1,4 +1,8 @@
-# Battlemarked Mod Framework (BMF) — v0.4.7-alpha
+# Battlemarked Mod Framework (BMF) — v0.4.8-alpha
+
+## New in v0.4.8 — existing AP caps in refund mode
+
+The v0.4.7 report showed +3 selected, four AP objects at permanent max 3, zero refunds and 32 skipped elevated-cap spends. Refund mode now honors **Adjust existing AP caps** (opt-in, disposable solo only). A verified cap of 3 with +3 selected receives at most two one-point refunds per tracked refill cycle, targeting five paid one-point actions. A normal cap of 2 receives three. Neither maximum nor permanent maximum is written by this path. The visible counter stays at its existing maximum. Caps above the selected target are not lowered; disable/repair of previously modified saves is not provided by this mode. Refills must be verified empty-to-full at the same cap; a change mid-cycle suspends refunds until such a refill. Early turn endings, native copies, and UI behavior still need runtime testing. Restart after changing settings. For this reported test, enable both AP refund mode and Adjust existing AP caps and select +3. A fresh disposable adventure is recommended; do not use a valued save.
 
 ## New in v0.4.7 — optional capped AP refunds
 

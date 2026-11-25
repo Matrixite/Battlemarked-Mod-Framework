@@ -18,28 +18,35 @@ Check(host.Count == 0 && trace.SequenceEqual(new[] {"three", "one"}), "reverse c
 Check(!host.Remove("missing", _ => {}), "missing module removal");
 Console.WriteLine("PASS: eight lifecycle assertions.");
 
+for (int cap = 2; cap <= 5; cap++)
 for (int bonus = 0; bonus <= 3; bonus++)
+foreach (bool adjust in new[] { false, true })
 {
-    int current = 2, used = 0, actions = 0;
+    int current = cap, used = 0, actions = 0;
+    int expected = cap == 2 || adjust ? Math.Max(cap, 2 + bonus) : cap;
     while (current > 0)
     {
         int before = current;
         current--; actions++;
-        if (ApRefundBudget.CanRefund(bonus, used, true, before, 1, current, current == 1))
-        { used++; current = 2; }
+        if (ApRefundBudget.CanRefund(bonus, used, cap, adjust, true, before, 1, current, true))
+        { used++; current = cap; }
         Check(actions <= 5, "refund budget bounded");
     }
-    Check(actions == 2 + bonus && used == bonus, "expected action count");
-    Check(!ApRefundBudget.CanRefund(bonus, used, true, 2, 1, 1, true), "budget exhausted");
+    Check(actions == expected && used == expected - cap, "expected action count");
+    Check(!ApRefundBudget.CanRefund(bonus, used, cap, adjust, true, cap, 1, cap - 1, true), "budget exhausted");
 }
-Check(!ApRefundBudget.CanRefund(3, 0, false, 2, 1, 1, true), "unverified before");
-Check(!ApRefundBudget.CanRefund(3, 0, true, 2, 1, 1, false), "unverified after");
-Check(!ApRefundBudget.CanRefund(3, 0, true, 1, 1, 0, false), "no refund after empty");
-Check(!ApRefundBudget.CanRefund(3, 0, true, 2, 2, 0, false), "two-point spend not refunded");
-Check(!ApRefundBudget.CanRefund(3, 0, true, 2, 0, 2, false), "free action not refunded");
+Check(ApRefundBudget.Limit(3, 3, true) == 2, "reported 3 AP cap gets two refunds");
+Check(ApRefundBudget.Limit(3, 3, false) == 0, "existing cap requires opt-in");
+Check(ApRefundBudget.Limit(1, 5, true) == 0, "above-target cap unchanged");
+Check(ApRefundBudget.Limit(3, 6, true) == 0, "unrecognized cap skipped");
+Check(!ApRefundBudget.CanRefund(3, 0, 3, true, false, 3, 1, 2, true), "unverified before");
+Check(!ApRefundBudget.CanRefund(3, 0, 3, true, true, 3, 1, 2, false), "unverified after");
+Check(!ApRefundBudget.CanRefund(3, 0, 3, true, true, 1, 1, 0, true), "no refund after empty");
+Check(!ApRefundBudget.CanRefund(3, 0, 3, true, true, 3, 2, 1, true), "two-point spend not refunded");
+Check(!ApRefundBudget.CanRefund(3, 0, 3, true, true, 3, 0, 3, true), "free action not refunded");
 Check(ApRefundBudget.CanReset(true, 0, true), "empty to full refill resets");
 Check(!ApRefundBudget.CanReset(true, 1, true), "partial refill does not reset");
-Check(!ApRefundBudget.CanReset(true, 2, true), "duplicate full refill does not reset");
+Check(!ApRefundBudget.CanReset(true, 3, true), "duplicate full refill does not reset");
 Check(!ApRefundBudget.CanReset(false, 0, true), "unverified empty does not reset");
 Check(!ApRefundBudget.CanReset(true, 0, false), "unverified full does not reset");
-Console.WriteLine("PASS: AP refund guard and budget scenarios.");
+Console.WriteLine("PASS: 32 AP refund cap/bonus/opt-in combinations and guard scenarios.");

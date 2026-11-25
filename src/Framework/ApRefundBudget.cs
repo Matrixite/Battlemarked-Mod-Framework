@@ -3,10 +3,19 @@ namespace Battlemarked.ModFramework;
 // Pure guards shared by the runtime hook and standalone tests.
 internal static class ApRefundBudget
 {
-    internal static bool CanRefund(int bonus, int used, bool normalBefore, int before, int amount, int after, bool normalAfter)
-        => bonus >= 1 && bonus <= 3 && used >= 0 && used < bonus && normalBefore && normalAfter
-           && before == 2 && amount == 1 && after == 1;
+    internal static bool EligibleCap(int cap, bool adjustExisting)
+        => cap == 2 || (adjustExisting && cap >= 3 && cap <= 5);
 
-    internal static bool CanReset(bool normalBefore, int before, bool fullNormalAfter)
-        => normalBefore && before == 0 && fullNormalAfter;
+    // Count the AP already present above the normal two against the selected bonus.
+    // A cap above the target is left untouched; refund mode never lowers a cap.
+    internal static int Limit(int bonus, int cap, bool adjustExisting)
+        => bonus >= 1 && bonus <= 3 && EligibleCap(cap, adjustExisting)
+           ? Math.Max(0, 2 + bonus - cap) : 0;
+
+    internal static bool CanRefund(int bonus, int used, int cap, bool adjustExisting, bool verifiedBefore, int before, int amount, int after, bool verifiedAfter)
+        => used >= 0 && used < Limit(bonus, cap, adjustExisting) && verifiedBefore && verifiedAfter
+           && before == cap && amount == 1 && after == cap - 1;
+
+    internal static bool CanReset(bool verifiedBefore, int before, bool verifiedFullAfter)
+        => verifiedBefore && before == 0 && verifiedFullAfter;
 }
