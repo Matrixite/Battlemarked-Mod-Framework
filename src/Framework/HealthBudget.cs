@@ -17,8 +17,27 @@ internal static class HealthBudget
 
     internal static bool CanNativeTrial(int percent, int current, int effectiveMax, float objectValue,
         float objectMax, float permanentMax, float rawMax, int modifierCount)
-        => modifierCount == 0 && CanApply(percent, current, effectiveMax, objectValue, objectMax, permanentMax, rawMax, modifierCount)
-           && Target(effectiveMax, percent) > effectiveMax;
+        => NativeTrialRejection(percent, current, effectiveMax, objectValue, objectMax,
+            permanentMax, rawMax, modifierCount) == null;
+
+    // Fresh-room authorization and the downed check are enforced by the caller.
+    // Full HP is not needed for a maximum-only write: preserve the exact current
+    // value even for an injured hero. Unknown modifiers and inconsistent native
+    // readings remain ineligible, including fractional or non-finite values.
+    internal static string NativeTrialRejection(int percent, int current, int effectiveMax, float objectValue,
+        float objectMax, float permanentMax, float rawMax, int modifierCount)
+    {
+        if (Normalize(percent) <= 100) return "health bonus disabled";
+        if (modifierCount < 0) return "modifier count unavailable";
+        if (modifierCount != 0) return "existing health modifiers";
+        if (effectiveMax <= 0 || effectiveMax > 10000) return "invalid maximum health";
+        if (current <= 0 || current > effectiveMax) return "current health outside valid range";
+        if (objectValue != current) return "current health getter mismatch";
+        if (rawMax != effectiveMax || permanentMax != effectiveMax || objectMax != effectiveMax)
+            return "native maximum getter mismatch";
+        if (Target(effectiveMax, percent) <= effectiveMax) return "invalid health target";
+        return null;
+    }
 
     // Initial application requires full HP and no net temporary max change.
     // A positive, integral raw maximum plus a consistent permanent maximum can

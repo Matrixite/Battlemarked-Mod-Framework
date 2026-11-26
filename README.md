@@ -1,4 +1,12 @@
-# Battlemarked Mod Framework (BMF) — v0.5.11-alpha
+# Battlemarked Mod Framework (BMF) — v0.5.12-alpha
+
+## New in v0.5.12 — health eligibility for injured heroes
+
+The v0.5.11 fresh-campaign queue worked at runtime: one new campaign and one successful claim, no room or arm rejections, three verified native max increases (16→20, 20→25, 16→20), 26 retained observations, and one hero reached 20/20 HP after beginning at 16/16. The AP probe confirms 12 verified refunds across four heroes and zero framework errors. Six health candidates were skipped by the baseline check. The old report does not show which baseline check failed, so that cause is not proven.
+
+The native health trial no longer requires full health. In the already verified fresh local solo room, an eligible living hero with consistent positive current HP at or below its unmodified native max can receive the max increase while retaining exactly its original current HP. For example, 14/16 at 125% becomes 14/20, not 20/20. Downed or zero-HP heroes, invalid/mismatched readings and any existing or unknown modifiers still cannot be changed. The runtime write, same-object verification and rollback, one-room authorization, one-attempt-per-identity/four-hero limit and AP calculations are unchanged. Health reports now include a count by baseline rejection reason and one anonymous set of raw readings for each reason.
+
+Test in a new disposable solo campaign: queue 125% health before creating it, play each hero and inspect the four maximums. If any hero remains unchanged, upload the hero-health probe, especially the new Health candidate rejected lines. Discard the adventure. Source changes and added assertions have not been compiled or runtime-tested here.
 
 ## New in v0.5.11 — queue hero health for a fresh campaign
 

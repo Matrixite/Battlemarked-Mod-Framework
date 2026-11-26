@@ -26,7 +26,7 @@ internal sealed class NativeHealthPartyTrial
     {
         if (Ended || string.IsNullOrWhiteSpace(sheetId) || key == IntPtr.Zero ||
             entries.Count >= Maximum || entries.ContainsKey(sheetId) || keys.Contains(key) ||
-            baseline <= 0 || target <= baseline || current != baseline) return null;
+            baseline <= 0 || target <= baseline || current <= 0 || current > baseline) return null;
         var entry = new Entry { Id = entries.Count + 1, StatKey = key, Baseline = baseline,
             Target = target, OriginalCurrent = current, LastCurrent = current, LastMax = baseline, HighestCurrent = current };
         entries.Add(sheetId, entry);

@@ -21,6 +21,7 @@ internal sealed class HeroHealthRule
     private int errors, skipped, missingIdentity, rejectedReservations, armRejections, freshStarts, existingStarts, claims, roomRejections;
     private DateTime lastWrite;
     private readonly List<string> samples = new();
+    private readonly Dictionary<string, int> candidateRejections = new(StringComparer.Ordinal);
     internal int NextPercent => HealthBudget.Normalize(nextPercent.Value);
     internal bool Armed => authorization.Armed;
     internal bool Queued => authorization.Queued;
@@ -131,6 +132,15 @@ internal sealed class HeroHealthRule
         roomRejections++;
         if (lastRoomRejection != reason) Sample("Health room rejected: " + reason);
         lastRoomRejection = reason;
+        dirty = true;
+    }
+
+    private void RejectCandidate(string reason, string readings)
+    {
+        skipped++;
+        candidateRejections.TryGetValue(reason, out int previous);
+        candidateRejections[reason] = previous + 1;
+        if (previous == 0) Sample($"Health candidate skipped: {reason} | {readings}");
         dirty = true;
     }
 
@@ -315,8 +325,15 @@ internal sealed class HeroHealthRule
             }
             if (!authorization.Allows(verifiedRoom) || writeHalted || !allowWrite || percent == 100) return;
             int initial = I(getStat, facade), nativeMax = I(getMax, facade);
-            if (!HealthBudget.CanNativeTrial(percent, initial, nativeMax, F(value, stat), F(max, stat), F(permanent, stat), F(raw, stat), ModifierCount(stat)))
-            { skipped++; dirty = true; return; }
+            float objectCurrent = F(value, stat), objectMax = F(max, stat), permanentMax = F(permanent, stat), rawMax = F(raw, stat);
+            int modifierCount = ModifierCount(stat);
+            string rejection = HealthBudget.NativeTrialRejection(percent, initial, nativeMax,
+                objectCurrent, objectMax, permanentMax, rawMax, modifierCount);
+            if (rejection != null)
+            {
+                RejectCandidate(rejection, $"current={initial} max={nativeMax} objectValue={objectCurrent} objectMax={objectMax} permanentMax={permanentMax} rawMax={rawMax} modifiers={modifierCount}");
+                return;
+            }
             int target = HealthBudget.Target(nativeMax, percent);
             var trial = party.Reserve(id, key, nativeMax, target, initial);
             if (trial == null) { rejectedReservations++; dirty = true; return; }
@@ -389,6 +406,8 @@ internal sealed class HeroHealthRule
                 "Up to four unique character-sheet IDs and native health objects; IDs/pointers not logged. Native maximum may persist. Discard test adventure." };
             foreach (var e in party.Entries.OrderBy(e => e.Id))
                 lines.Add($"hero#{e.Id} applied={e.Applied} baseline={e.Baseline} target={e.Target} originalCurrent={e.OriginalCurrent} lastCurrent={e.LastCurrent} lastMax={e.LastMax} highestCurrent={e.HighestCurrent} observations={e.Observations} verified={e.Verified} lost={e.Lost} aboveBaseline={e.AboveBaseline} replacedStat={e.ReplacedStat} rolledBack={e.RolledBack} rollbackFailed={e.RollbackFailed}");
+            foreach (var reason in candidateRejections.OrderBy(e => e.Key))
+                lines.Add($"Health candidate rejected: {reason.Key} count={reason.Value}");
             lines.AddRange(samples);
             File.WriteAllLines(Path.Combine(ctx.DataDirectory, "hero-health-probe.txt"), lines);
             lastWrite = DateTime.UtcNow; dirty = false;
