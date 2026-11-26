@@ -1,5 +1,9 @@
 # v0.6.13-alpha validation
 
+## First stable release automation
+
+The 12 Python release-gate and simulated publication tests pass locally. These cover the current alpha skip, exact stable-version eligibility, inconsistent version rejection, wrong branch refusal, mismatched tag refusal, versioned source archive and matching SHA-256 checksum, and repeated-run protection. The publication tests use a temporary local Git remote and mock GitHub CLI; they do not create a real release. The hosted workflow is configured to run the .NET 8 core tests before publication; dotnet and the Windows game environment are unavailable here. Real GitHub Actions execution and Windows/gameplay acceptance remain unverified. No framework version, gameplay behavior or updater code changes are included in this automation.
+
 ## v0.6.13 update warning
 
 Source checks verify the warning is present on Updates, uses enlarged bold yellow labels without altering the shared skin style, and fits within the minimum manager height. If style construction fails, plain uppercase labels remain. Windows compilation and visual verification are pending because dotnet is unavailable here. In-game acceptance: open Updates at normal and minimum supported window sizes, verify the warning and all buttons are readable, and confirm Steam shows Play before relaunching after a queued update.

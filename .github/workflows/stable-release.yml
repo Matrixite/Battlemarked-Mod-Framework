@@ -1,0 +1,66 @@
+name: Publish BMF v1.0.0
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.repository == 'Matrixite/Battlemarked-Mod-Framework' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      eligible: ${{ steps.version.outputs.eligible }}
+    steps:
+      - name: Fetch the exact public source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git fetch --depth=1 --no-tags origin "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Verify release version
+        id: version
+        run: python3 scripts/release_gate.py >> "$GITHUB_OUTPUT"
+
+      - name: Run release gate tests
+        if: steps.version.outputs.eligible == 'true'
+        run: python3 -m unittest discover -s tests/ReleaseTests -v
+
+      - name: Run framework core tests
+        if: steps.version.outputs.eligible == 'true'
+        run: dotnet run --project tests/CoreTests/CoreTests.csproj -c Release
+
+  publish:
+    needs: validate
+    if: needs.validate.outputs.eligible == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: bmf-v1-release
+      cancel-in-progress: false
+    steps:
+      - name: Fetch the approved commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git fetch --depth=1 --no-tags origin "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Create version tag and stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: bash scripts/publish-v1-release.sh
