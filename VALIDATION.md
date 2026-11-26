@@ -1,4 +1,14 @@
-# v0.6.2-alpha validation
+# v0.6.3-alpha validation
+
+## v0.6.3 end-to-end update test
+
+The user confirmed v0.6.2 works. This release changes only the four version declarations and documentation, leaving the updater, AP and health implementation and Windows installer untouched. End-to-end update verification is pending at publication, not claimed successful.
+
+1. In the installed v0.6.2 game, press F10 > Updates > Check for updates now. The available version should be 0.6.3.
+2. Click Download and install when game closes. Wait for the status to confirm the worker has queued the update, then exit Battlemarked normally.
+3. Wait for the installer to finish. Relaunch only after the worker reports success.
+4. Confirm the installed version is 0.6.3 and that GitHub reports no newer version. Check that settings are retained.
+5. If anything fails, retain BepInEx/BMF-Updates/last-update.txt, update-install.log and BepInEx/LogOutput.log for diagnosis.
 
 ## v0.6.2 build correction
 

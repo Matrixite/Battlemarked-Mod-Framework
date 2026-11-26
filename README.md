@@ -1,8 +1,12 @@
-# Battlemarked Mod Framework (BMF) — v0.6.2-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.3-alpha
+
+## v0.6.3 — automatic update test
+
+This is an intentional version-only test release following the user's confirmation that v0.6.2 works. It changes no gameplay rules, updater implementation, worker or installer logic. Its purpose is to test the complete update from v0.6.2 through **F10 > Updates**, including source download, staging, post-exit build/install, and relaunch. No manual ZIP install is required for the intended test. Wait for the worker to signal that the update is queued before closing the game, and do not restart until the installer finishes.
 
 ## v0.6.2 — updater compiler compatibility
 
-The Windows v0.6.1 build reported CS0656 (missing `System.Runtime.CompilerServices.NullableAttribute..ctor`) specifically at the captured download lambda in FrameworkUpdater.cs. This patch replaces that inferred compiler-generated closure with a named, explicitly typed request/delegate, while retaining the same asynchronous staging, safety checks, updater worker and installer. It does not require editing the SDK, BepInEx or game assemblies. The working named-method update-check pattern is unchanged. Install v0.6.2 manually; v0.6.1 failed to build, so its updater cannot install this correction. Windows compilation remains to be verified.
+The Windows v0.6.1 build reported CS0656 (missing `System.Runtime.CompilerServices.NullableAttribute..ctor`) specifically at the captured download lambda in FrameworkUpdater.cs. This patch replaces that inferred compiler-generated closure with a named, explicitly typed request/delegate, while retaining the same asynchronous staging, safety checks, updater worker and installer. It does not require editing the SDK, BepInEx or game assemblies. The working named-method update-check pattern is unchanged. Install v0.6.2 manually; v0.6.1 failed to build, so its updater cannot install this correction. The user subsequently confirmed v0.6.2 works.
 
 ## v0.6.1 — automatic GitHub updates
 
