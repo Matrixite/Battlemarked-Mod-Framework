@@ -1,4 +1,10 @@
-# Battlemarked Mod Framework (BMF) — v0.6.5-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.6-alpha
+
+## v0.6.6 — one-click diagnostic export
+
+Use **F10 > Reports > Export support ZIP** to capture the available framework reports in one local ZIP. The export refreshes compatibility, AP and health reports, includes existing startup/gameplay/core reports and the last update result if present, and writes a manifest listing report versions and timestamps, missing or oversized files. Each report is capped at 1 MiB. Find the ZIP in `BepInEx/config/BattlemarkedModFramework/support/`. It intentionally excludes configuration, saves, the health baseline ledger, raw BepInEx log and installer transcript. Review the included reports before sharing; no automatic uploads. For updater failures, share `BMF-Updates/update-install.log` separately if needed. AP, health behavior, updater, and installer are unchanged.
+
+The user confirmed the automatic upgrade to v0.6.3 and the v0.6.5 Steam stopping correction. Remaining release gate: verify repeatable health on two genuinely fresh disposable campaigns without restarting, and validate the export on Windows.
 
 ## v0.6.5 — updater shutdown cleanup
 

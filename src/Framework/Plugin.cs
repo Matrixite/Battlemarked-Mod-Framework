@@ -187,6 +187,14 @@ public sealed class Plugin : BasePlugin
         catch (Exception ex) { Log.LogWarning("Compatibility report: " + ex.Message); return false; }
     }
 
+    internal string ExportSupportBundle()
+    {
+        if (!RefreshCompatibilityReport())
+            throw new IOException("Could not refresh the compatibility report");
+        HouseRules.RefreshReports();
+        return Path.GetFileName(SupportBundle.Create(dataDir, Paths.GameRootPath, Framework.Version));
+    }
+
     private void WriteReport()
     {
         try

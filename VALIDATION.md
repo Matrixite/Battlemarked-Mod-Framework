@@ -1,4 +1,10 @@
-# v0.6.5-alpha validation
+# v0.6.6-alpha validation
+
+## v0.6.6 diagnostics
+
+Added a local support archive with a fixed allowlist, per-file length cap, report-version/timestamp manifest, missing-file reporting and atomic publication. Tests cover absent and oversized reports, older version identification and exclusion of settings/ledger. Source review only: dotnet is unavailable in the workspace. No save or gameplay writes occur during export. In-game acceptance: export from F10 > Reports, verify the archive contains the expected diagnostic text and no settings, ledger or saves. Inspect the contents before sharing.
+
+User confirmations: v0.6.2 built and worked, automatic update to v0.6.3 worked, and the v0.6.5 Steam STOPPING correction worked. The antivirus warning during the v0.6.4 update is not diagnosed; v0.6.4 loaded. Native-health repeatable trial remains to be tested. Do not mark the framework stable until remaining safety checks are verified.
 
 ## v0.6.5 shutdown / build-server isolation
 

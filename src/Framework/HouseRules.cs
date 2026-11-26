@@ -147,6 +147,14 @@ internal sealed class HouseRules : BattlemarkedModule
             "Selected preset: " + PresetName
         };
     }
+    // Refresh the reports without touching native game objects or gameplay rules.
+    internal static void RefreshReports()
+    {
+        var r = running;
+        if (r == null) return;
+        r.Write();
+        r.health?.Write();
+    }
     private void SaveApPreference(Action update, string detail)
     {
         try { update(); ctx.Config.Save(); }

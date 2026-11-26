@@ -224,11 +224,19 @@ internal sealed class ModMenu
                 Label(189, "Save safety: no native health writes to loaded games.");
                 Label(219, "Unknown builds do not enable house-rule writes.");
                 Label(249, "No automatic save repair; backup before trials.");
-                if (Button(280, "Refresh local compatibility report"))
+                if (Button(275, "Refresh local compatibility report"))
                     message = plugin.RefreshCompatibilityReport() ? "Report refreshed." : "Report could not be written; check log.";
-                Label(317, "BepInEx/config/BattlemarkedModFramework/");
-                Label(345, "compatibility-report.txt | startup-report.txt");
-                Label(375, message);
+                if (Button(309, "Export support ZIP (local reports only)"))
+                {
+                    try { message = "Saved: " + plugin.ExportSupportBundle(); }
+                    catch (Exception ex)
+                    {
+                        message = "Support export failed; check BepInEx log.";
+                        log.LogWarning("BMF support export: " + ex.Message);
+                    }
+                }
+                Label(342, "BepInEx/config/BattlemarkedModFramework/support/");
+                Label(374, message);
                 return;
             }
 

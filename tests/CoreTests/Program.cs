@@ -385,3 +385,28 @@ var clicked = new MenuPosition(-1, -1);
 clicked.Begin(580, 285, 560, 275);
 Check(!clicked.End() && clicked.SavedX == -1 && clicked.SavedY == -1, "title click does not persist center");
 Console.WriteLine("PASS: menu position and drag assertions.");
+
+// Diagnostic exports are local, bounded and allowlisted; never include the
+// native health ledger, settings, or game saves.
+var supportRoot = Path.Combine(Path.GetTempPath(), "bmf-support-test-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(supportRoot);
+try
+{
+    var supportConfig = Path.Combine(supportRoot, "BepInEx", "config", "BattlemarkedModFramework");
+    var houseDir = Path.Combine(supportConfig, "org.battlemarked.houserules");
+    Directory.CreateDirectory(houseDir);
+    File.WriteAllText(Path.Combine(supportConfig, "compatibility-report.txt"), "Framework=0.6.6\n");
+    File.WriteAllText(Path.Combine(houseDir, "house-rules-probe.txt"), "Framework=0.6.5\n");
+    File.WriteAllText(Path.Combine(houseDir, "hero-health-probe.txt"), new string('x', SupportBundle.MaxReportBytes + 1));
+    File.WriteAllText(Path.Combine(houseDir, "health-baselines-v060.txt"), "private");
+    File.WriteAllText(Path.Combine(houseDir, "settings.cfg"), "private");
+    var supportFile = SupportBundle.Create(supportConfig, supportRoot, "0.6.6");
+    using var supportZip = System.IO.Compression.ZipFile.OpenRead(supportFile);
+    var names = supportZip.Entries.Select(e => e.FullName).OrderBy(v => v).ToArray();
+    Check(names.SequenceEqual(new[] {"compatibility-report.txt", "house-rules-probe.txt", "manifest.txt"}), "only bounded allowlisted reports included");
+    using var manifestReader = new StreamReader(supportZip.GetEntry("manifest.txt").Open());
+    string supportManifest = manifestReader.ReadToEnd();
+    Check(supportManifest.Contains("previous version") && supportManifest.Contains("too large") && supportManifest.Contains("missing"), "export explains old, oversized and missing reports");
+}
+finally { Directory.Delete(supportRoot, true); }
+Console.WriteLine("PASS: support bundle allowlist and manifest assertions.");
