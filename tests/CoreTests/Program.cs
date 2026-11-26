@@ -18,6 +18,20 @@ Check(host.Count == 0 && trace.SequenceEqual(new[] {"three", "one"}), "reverse c
 Check(!host.Remove("missing", _ => {}), "missing module removal");
 Console.WriteLine("PASS: eight lifecycle assertions.");
 
+// Developer mode affects menu visibility only; known diagnostics are opt-in.
+var developmentModuleIds = new[] { "org.battlemarked.diagnostics.corelogic", "org.battlemarked.diagnostics.gameplay", "org.battlemarked.example.scenelogger" };
+foreach (string id in developmentModuleIds)
+{
+    Check(!MenuModuleVisibility.IsVisible(id, false), "diagnostic hidden by default: " + id);
+    Check(MenuModuleVisibility.IsVisible(id, true), "diagnostic visible in developer mode: " + id);
+}
+foreach (string id in new[] { "org.battlemarked.houserules", "org.example.custom", "org.battlemarked.diagnostics.custom" })
+{
+    Check(MenuModuleVisibility.IsVisible(id, false), "ordinary module visible by default: " + id);
+    Check(MenuModuleVisibility.IsVisible(id, true), "ordinary module visible in developer mode: " + id);
+}
+Console.WriteLine("PASS: developer-mode menu visibility.");
+
 for (int cap = 2; cap <= 5; cap++)
 for (int bonus = 0; bonus <= 3; bonus++)
 foreach (bool adjust in new[] { false, true })

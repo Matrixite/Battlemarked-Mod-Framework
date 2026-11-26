@@ -1,4 +1,8 @@
-# Battlemarked Mod Framework (BMF) — v0.6.6-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.7-alpha
+
+## v0.6.7 — developer-only module visibility
+
+The Mods tab now hides Core gameplay diagnostics, Gameplay event logger and the optional Scene logger by default. Toggle **Developer mode: OFF/ON** at the bottom of F10 > Mods to show or hide those entries immediately; the preference is saved under Menu > DeveloperMode in the framework config. This changes display only: existing diagnostic module enable/disable settings, reports, house rules and other mods are unaffected. Module enable/disable switches still apply on the next launch. Developer mode is an opt-in display preference, not an access-control mechanism.
 
 ## v0.6.6 — one-click diagnostic export
 

@@ -17,7 +17,7 @@ internal sealed class ModMenu
 {
     private readonly Plugin plugin;
     private readonly ManualLogSource log;
-    private readonly ConfigEntry<bool> enabled;
+    private readonly ConfigEntry<bool> enabled, developerMode;
     private readonly ConfigFile config;
     private readonly ConfigEntry<int> savedX, savedY;
     private readonly MenuPosition position;
@@ -32,6 +32,7 @@ internal sealed class ModMenu
     {
         this.plugin = plugin; this.log = log; this.config = config;
         enabled = config.Bind("Menu", "Enabled", true, "Enable experimental desktop mod manager.");
+        developerMode = config.Bind("Menu", "DeveloperMode", false, "Show built-in diagnostic and example modules in the Mods tab. Visibility only; module settings are unchanged.");
         open = config.Bind("Menu", "StartOpen", false, "Open menu automatically; fallback if F10 is unavailable.").Value;
         savedX = config.Bind("Menu", "PositionX", -1, "Last menu left position in pixels; -1 centers horizontally.");
         savedY = config.Bind("Menu", "PositionY", -1, "Last menu top position in pixels; -1 centers vertically.");
@@ -258,12 +259,15 @@ internal sealed class ModMenu
                 return;
             }
 
-            var modules = plugin.MenuModules.ToArray();
-            Label(95, "Installed modules | change takes effect on next launch");
+            var modules = new List<MenuModule>();
+            foreach (var m in plugin.MenuModules)
+                if (MenuModuleVisibility.IsVisible(m.Id, developerMode.Value)) modules.Add(m);
+            Label(95, (developerMode.Value ? "Developer view" : "Installed modules") + " | module switches apply next launch");
+            if (modules.Count == 0) Label(125, "No visible modules installed.");
             int rows = Math.Max(1, (int)((height - 184) / 49));
-            int pages = Math.Max(1, (modules.Length + rows - 1) / rows);
+            int pages = Math.Max(1, (modules.Count + rows - 1) / rows);
             page = Math.Max(0, Math.Min(page, pages - 1));
-            for (int i = 0; i < rows && page * rows + i < modules.Length; i++)
+            for (int i = 0; i < rows && page * rows + i < modules.Count; i++)
             {
                 var m = modules[page * rows + i]; float top = y + 125 + i * 49;
                 GUI.Label(new Rect(x + 15, top, width - 120, 23), m.Name);
@@ -277,6 +281,21 @@ internal sealed class ModMenu
             if (Small(height - 59, 15, 85, "Previous")) page = Math.Max(0, page - 1);
             GUI.Label(new Rect(x + 108, y + height - 59, 100, 24), $"{page + 1}/{pages}");
             if (Small(height - 59, 170, 85, "Next")) page = Math.Min(pages - 1, page + 1);
+            if (Small(height - 59, width - 185, 170, "Developer mode: " + (developerMode.Value ? "ON" : "OFF")))
+            {
+                try
+                {
+                    developerMode.Value = !developerMode.Value;
+                    page = 0;
+                    config.Save();
+                    message = developerMode.Value ? "Development modules visible." : "Development modules hidden.";
+                }
+                catch (Exception ex)
+                {
+                    message = "Could not save developer mode; see BepInEx log.";
+                    log.LogWarning(ex.Message);
+                }
+            }
             Label(height - 30, message);
         }
         catch (Exception ex) { broken = true; log.LogWarning("BMF desktop menu disabled for this session: " + ex); }

@@ -1,4 +1,8 @@
-# v0.6.6-alpha validation
+# v0.6.7-alpha validation
+
+## v0.6.7 developer module visibility
+
+Source-level checks verify the default-off preference, exact diagnostic IDs and filter-before-pagination wiring. CoreTests includes coverage of all three diagnostic IDs and ordinary/third-party IDs in both modes. The .NET SDK is unavailable in the development workspace, so compilation and executable tests remain pending. Windows acceptance: use F10 > Mods with Developer mode OFF (only normal modules appear), toggle ON (all installed diagnostics appear), toggle OFF again (hidden immediately, normal modules remain), restart once with each preference to confirm persistence. Leave module settings unchanged during the visibility test; confirm diagnostic reporting still works. An absent optional Scene logger should not appear.
 
 ## v0.6.6 diagnostics
 
