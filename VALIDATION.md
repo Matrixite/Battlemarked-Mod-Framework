@@ -1,4 +1,10 @@
-# v0.6.4-alpha validation
+# v0.6.5-alpha validation
+
+## v0.6.5 shutdown / build-server isolation
+
+User reports Steam continues showing STOPPING after leaving Battlemarked. Source review identified that the post-exit updater builds through dotnet with reusable servers enabled. The installer now passes --disable-build-servers, -p:UseSharedCompilation=false and -nr:false on every project build; these are scoped to the build command and do not stop anyone's unrelated processes. The user observed v0.6.4 loaded; no process listing or updater transcript was available to confirm the cause of STOPPING. Static checks only: Windows PowerShell and dotnet are not installed in the development environment.
+
+Acceptance: update from v0.6.4, allow the post-exit installer to complete, then verify Steam returns to Play. Relaunch v0.6.5, exit normally without requesting an update, and confirm Play returns promptly as well. If it remains STOPPING, record whether battlemarked.exe is still running and retain the update transcript and BepInEx log for investigation.
 
 ## v0.6.4 window movement
 

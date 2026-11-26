@@ -170,7 +170,9 @@ if ($IncludeExample -or ($Install -and (Test-Path -LiteralPath (Join-Path $dest 
 }
 foreach ($p in $projects) {
     $project = Join-Path $root $p.Project
-    & dotnet build $project -c Release "-p:GameDir=$GameDir"
+    # The automatic updater is a child of the game. Do not leave reusable
+    # MSBuild/Roslyn servers running after the installer has finished.
+    & dotnet build $project -c Release --disable-build-servers -p:UseSharedCompilation=false -nr:false "-p:GameDir=$GameDir"
     if ($LASTEXITCODE -ne 0) { throw "Build failed: $project" }
     $dir = Split-Path $project -Parent
     $p.Output = Join-Path $dir "bin/Release/net6.0/$($p.Dll)"

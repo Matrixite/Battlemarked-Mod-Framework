@@ -1,4 +1,8 @@
-# Battlemarked Mod Framework (BMF) — v0.6.4-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.5-alpha
+
+## v0.6.5 — updater shutdown cleanup
+
+The installer now disables persistent .NET build servers, Roslyn shared compilation and MSBuild node reuse during framework builds only. This addresses a plausible reason Steam can continue showing STOPPING after a game-launched update finishes: reusable compiler/build processes might still belong to its process tree. Steam may still show STOPPING while the legitimate post-exit installation is running; wait for the installer to finish. The change does not terminate other processes, change antivirus settings, or modify the game's shutdown code. If Steam remains stuck after a normal exit without an update, capture the Battlemarked process status and game log; this is a separate possible shutdown issue. The exact cause of the user's report remains unverified.
 
 ## v0.6.4 — moveable mod manager
 
