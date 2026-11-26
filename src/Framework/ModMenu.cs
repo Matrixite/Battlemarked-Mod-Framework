@@ -28,6 +28,14 @@ internal sealed class ModMenu
     private string message = "Settings apply on next launch.";
     private Func<bool> poll;
     private bool inputChecked;
+    private bool warningStyleChecked;
+    private GUIStyle warningStyle;
+    private static readonly string[] UpdateWarningLines =
+    {
+        "AFTER THE UPDATE IS QUEUED, QUIT.",
+        "WAIT UNTIL STEAM SHOWS PLAY.",
+        "NOT STOP OR STOPPING."
+    };
     internal ModMenu(Plugin plugin, ConfigFile config, ManualLogSource log)
     {
         this.plugin = plugin; this.log = log; this.config = config;
@@ -119,6 +127,33 @@ internal sealed class ModMenu
         try { usingPolling = true; if (poll()) SetOpen(!open); }
         catch (Exception ex) { poll = null; usingPolling = false; log.LogWarning("BMF hotkey polling unavailable; using GUI keyboard events: " + ex.Message); }
     }
+    private void DrawUpdateWarning(float x, float y, float width)
+    {
+        if (!warningStyleChecked)
+        {
+            warningStyleChecked = true;
+            try
+            {
+                // Clone the skin style; do not alter labels elsewhere in the manager.
+                warningStyle = new GUIStyle(GUI.skin.label);
+                warningStyle.fontSize = 18;
+                warningStyle.richText = true;
+                warningStyle.normal.textColor = new Color(1f, 0.85f, 0.25f, 1f);
+            }
+            catch (Exception ex)
+            {
+                warningStyle = null;
+                log.LogWarning("BMF update warning style unavailable: " + ex.Message);
+            }
+        }
+        for (int i = 0; i < UpdateWarningLines.Length; i++)
+        {
+            var rect = new Rect(x + 15, y + 317 + 22 * i, width - 30, 22);
+            if (warningStyle != null) GUI.Label(rect, "<b>" + UpdateWarningLines[i] + "</b>", warningStyle);
+            else GUI.Label(rect, UpdateWarningLines[i]);
+        }
+    }
+
     internal void Draw()
     {
         if (!enabled.Value || broken) return;
@@ -254,17 +289,17 @@ internal sealed class ModMenu
             {
                 var updater = plugin.Updater;
                 Label(97, "Framework updates");
-                Label(124, "Installed: " + Framework.Version + " | Available: " + (updater?.AvailableVersion ?? "Unavailable"));
+                Label(122, "Installed: " + Framework.Version + " | Available: " + (updater?.AvailableVersion ?? "Unavailable"));
                 if (updater == null) { Label(154, "Updater unavailable; see BepInEx log."); return; }
-                Label(153, UpdatePolicy.ForDisplay(updater.Status, "Update status details: see development Reports."));
-                if (!updater.Busy && !updater.Scheduled && Button(181, "Check for updates now")) updater.CheckNow();
-                if (updater.CanInstall && Button(216, "Download and install when game closes")) updater.Install();
-                if (updater.Scheduled && Button(216, "Cancel scheduled update")) updater.CancelScheduled();
-                if (Button(251, "Automatic update checks: " + (updater.AutoCheck ? "ON" : "OFF"))) updater.ToggleAutoCheck();
-                if (Button(286, "Automatic installation: " + (updater.AutoInstall ? "ON" : "OFF (opt-in)"))) updater.ToggleAutoInstall();
-                Label(318, "Source updates build locally; no DLL replacement while playing.");
-                Label(345, "Exit game after queueing; wait for installer before relaunch.");
-                Label(373, UpdatePolicy.ForDisplay(updater.LastResult, "Previous update details: see development Reports."));
+                Label(147, UpdatePolicy.ForDisplay(updater.Status, "Update status details: see development Reports."));
+                if (!updater.Busy && !updater.Scheduled && Button(173, "Check for updates now")) updater.CheckNow();
+                if (updater.CanInstall && Button(204, "Download and install when game closes")) updater.Install();
+                if (updater.Scheduled && Button(204, "Cancel scheduled update")) updater.CancelScheduled();
+                if (Button(235, "Automatic update checks: " + (updater.AutoCheck ? "ON" : "OFF"))) updater.ToggleAutoCheck();
+                if (Button(266, "Automatic installation: " + (updater.AutoInstall ? "ON" : "OFF (opt-in)"))) updater.ToggleAutoInstall();
+                GUI.Label(new Rect(x + 15, y + 295, width - 30, 20), "Source updates build locally; no DLL replacement while playing.");
+                DrawUpdateWarning(x, y, width);
+                Label(385, UpdatePolicy.ForDisplay(updater.LastResult, "Previous update details: see development Reports."));
                 return;
             }
 

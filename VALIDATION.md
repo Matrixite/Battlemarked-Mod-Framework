@@ -1,4 +1,8 @@
-# v0.6.12-alpha validation
+# v0.6.13-alpha validation
+
+## v0.6.13 update warning
+
+Source checks verify the warning is present on Updates, uses enlarged bold yellow labels without altering the shared skin style, and fits within the minimum manager height. If style construction fails, plain uppercase labels remain. Windows compilation and visual verification are pending because dotnet is unavailable here. In-game acceptance: open Updates at normal and minimum supported window sizes, verify the warning and all buttons are readable, and confirm Steam shows Play before relaunching after a queued update.
 
 ## v0.6.12 rollback
 

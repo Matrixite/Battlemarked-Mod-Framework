@@ -1,4 +1,8 @@
-# Battlemarked Mod Framework (BMF) — v0.6.12-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.13-alpha
+
+## v0.6.13 — prominent update restart warning
+
+The Updates tab displays a large bold yellow warning: after the update is queued, quit Battlemarked and wait until Steam shows **Play**, not **Stop** or **Stopping**, before launching again. The updater, install worker and module lifecycle are unchanged.
 
 ## v0.6.12 — rollback to v0.6.10 behavior
 
