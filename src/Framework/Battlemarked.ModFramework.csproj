@@ -1,3 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><TargetFramework>net6.0</TargetFramework><NeedsGameReferences>true</NeedsGameReferences></PropertyGroup>
+  <ItemGroup><EmbeddedResource Include="UpdateWorker.ps1" LogicalName="BMF.UpdateWorker.ps1" /></ItemGroup>
 </Project>

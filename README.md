@@ -1,8 +1,22 @@
-# Battlemarked Mod Framework (BMF) — v0.6.0-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.1-alpha
+
+## v0.6.1 — automatic GitHub updates
+
+Install this version once using `Install-BMF.cmd`. From then on, open **F10 > Updates**.
+
+- **Automatic update checks** are on by default: a nonblocking check at startup and every six hours, or click Check for updates now.
+- **Download and install when game closes** downloads a pinned snapshot from the public `Matrixite/Battlemarked-Mod-Framework` repository, checks the manifest/version and safe archive paths, and schedules a separate Windows worker. No plugin DLL is replaced while the game is running. Keep the game open until the status says queued, exit normally, then wait for the installer to finish before relaunching.
+- **Automatic installation** is off by default. Enable it to download and queue newer versions without another click. Cancel a queued update before exiting if you change your mind. Disabling automatic checks does not cancel a worker already queued. A cancelled/failed scheduled worker for the same pinned commit is not automatically repeated; use a manual check and install to retry.
+- The updater builds the source locally with the existing .NET SDK and BepInEx/interop assemblies. It uses the backup-and-rollback installer, checks the expected version and refuses an automatic downgrade before copying, and keeps existing config, health baselines, third-party plugins and game saves. It also updates an already-installed example DLL. It does not launch or forcibly close the game.
+- See `BepInEx/BMF-Updates/last-update.txt` and `update-install.log` for the last worker outcome. Backups remain in `BepInEx/BMF-Backups/`; staged source is retained for troubleshooting. If necessary, run `Restore-BMF.cmd` from a manually extracted source archive with the game closed (DLL rollback only).
+- Security model: the fixed public repository is the trusted source of executable code. HTTPS, pinned commit IDs, strict version comparison, no redirects, bounded downloads and archive path validation are used. No GitHub password, token or separate binary signing key is required. This is not a signed binary release mechanism: protect the GitHub account and keep main releasable. No credentials or gameplay data are sent by the updater.
+- **Publishing future updates:** bump the numeric version in `bmf-update.json`, `Directory.Build.props`, `src/Framework/Api.cs` and `src/Example/ExamplePlugin.cs` together; keep the installer and worker contract compatible. The updater checks main's pinned commit and only offers strictly newer versions. Changes without a version bump do not update clients already on that version.
+
+v0.6.1 adds only the updater; the AP and native-health rule code is unchanged from v0.6.0. Its Windows worker still requires a real update/restart test.
 
 ## v0.6.0 — Stability and quality of life
 
-This source alpha builds on the user's verified v0.5.13 session: 12 AP refunds, four resets, four native health increases (16→20, 25→32 with raw 22→29 and the original +3 modifier, 20→25, 16→20), all four healed to target, 46/46 retained observations, zero framework errors. **The new v0.6 code has not yet been compiled or played.**
+This source alpha builds on the user's verified v0.5.13 session: 12 AP refunds, four resets, four native health increases (16→20, 25→32 with raw 22→29 and the original +3 modifier, 20→25, 16→20), all four healed to target, 46/46 retained observations, zero framework errors. The user subsequently compiled and played v0.6.0: the Relaxed preset produced four verified AP refunds and four resets, with zero framework errors. Health was not queued in that session.
 
 - **Repeatable health trials:** leave the current campaign, queue from F10 > Health, then start a new disposable solo campaign. A successful exact fresh-start callback with one verified local room opens a new bounded four-hero trial; loading an existing campaign never authorizes a write. The health preference persists; explicit authorization does not. Any fault or loss of verification still blocks further writes for the launch. Native setter, modifier preservation and AP refund math are unchanged.
 - **Baseline safety:** before a native health write the framework records the original raw/effective maximum and modifier count in `health-baselines-v060.txt` under the house-rule config directory. A known character-sheet identity (SHA-256 hash only) or same-process native stat pointer with changed baseline is rejected. Missing/corrupt/unwritable known journal data stops new health writes; never delete it to bypass the guard. A different identity, previously modified save from an older release, or deleted journal across launches cannot be proven unmodified. Use fresh disposable games, retain the journal and back up saves separately. This is not a universal save validator or an automatic repair tool.
@@ -18,7 +32,7 @@ This source alpha builds on the user's verified v0.5.13 session: 12 AP refunds, 
 4. If necessary, close the game and run `Restore-BMF.cmd` to restore the latest complete DLL snapshot after confirmation. It backs up the currently installed pair too. It cannot undo game-save changes. Do not delete older backups if you need them.
 5. Launch, press F10, and use fresh disposable solo adventures only. See VALIDATION.md for the two-campaign regression test.
 
-For custom paths, pass `-GameDir "D:\SteamLibrary\steamapps\common\Battlemarked"` to any of the three launchers. No automatic downloads or silent updates are performed.
+For custom paths, pass `-GameDir "D:\SteamLibrary\steamapps\common\Battlemarked"` to any of the three launchers. The command-line installer performs no downloads; v0.6.1 adds the separate opt-in updater described above.
 
 ## Historical release notes (older versions)
 

@@ -1,6 +1,7 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [string]$GameDir,
+    [string]$ExpectedVersion,
     [switch]$Install,
     [switch]$IncludeExample,
     [switch]$CheckOnly,
@@ -8,6 +9,11 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
+if ($ExpectedVersion) {
+    if ($ExpectedVersion -cnotmatch '^(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})$') { throw 'Invalid expected update version.' }
+    [xml]$props = Get-Content -LiteralPath (Join-Path $root 'Directory.Build.props') -Raw
+    if ([string]$props.Project.PropertyGroup.Version -cne $ExpectedVersion) { throw 'Source version does not match the requested update.' }
+}
 $verifiedHash = 'C195E177AB5986C26D9E168517A2712DB451A35B79847768883550B05B829280'
 $names = @('Battlemarked.ModFramework.dll', 'Battlemarked.Example.dll')
 if (($CheckOnly -and ($Install -or $RestoreLatest)) -or ($Install -and $RestoreLatest)) { throw 'Choose one operation.' }
@@ -59,6 +65,18 @@ $dest = Join-Path $GameDir 'BepInEx\plugins\BattlemarkedModFramework'
 $backupRoot = Join-Path $GameDir 'BepInEx\BMF-Backups'
 function Assert-GameClosed {
     if (Get-Process -Name battlemarked -ErrorAction SilentlyContinue) { throw 'Close Battlemarked before changing installed DLLs.' }
+}
+function Open-InstallGate {
+    # Manual installs/restores and the automatic worker share this DLL-copy gate.
+    New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+    return [System.IO.File]::Open((Join-Path $backupRoot 'install.lock'), [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+}
+function Assert-UpdateIsNewer {
+    if (!$ExpectedVersion) { return }
+    $installedDll = Join-Path $dest $names[0]
+    if (!(Test-Path -LiteralPath $installedDll -PathType Leaf)) { throw 'Installed framework missing; use manual installation.' }
+    $installedVersion = [Reflection.AssemblyName]::GetAssemblyName($installedDll).Version
+    if ($installedVersion -ge [version]($ExpectedVersion + '.0')) { throw 'Installed version is already equal or newer; automatic update skipped.' }
 }
 function New-Snapshot {
     $folder = Join-Path $backupRoot ((Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + [Guid]::NewGuid().ToString('N'))
@@ -116,16 +134,20 @@ if ($RestoreLatest) {
     if (!$latest) { throw 'No complete v0.6 backup found.' }
     $null = Read-Snapshot $latest.FullName
     if ($PSCmdlet.ShouldProcess($dest, "Restore previous DLL snapshot $($latest.Name)")) {
-        Assert-GameClosed
-        New-Item -ItemType Directory -Path $dest -Force | Out-Null
-        $current = New-Snapshot
-        try { Restore-Snapshot $latest.FullName }
-        catch {
-            $failure = $_
-            try { Restore-Snapshot $current } catch { Write-Warning "Rollback failed. Keep snapshot $current for manual recovery." }
-            throw $failure
+        $installGate = Open-InstallGate
+        try {
+            Assert-GameClosed
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            $current = New-Snapshot
+            try { Restore-Snapshot $latest.FullName }
+            catch {
+                $failure = $_
+                try { Restore-Snapshot $current } catch { Write-Warning "Rollback failed. Keep snapshot $current for manual recovery." }
+                throw $failure
+            }
+            Write-Host 'Previous DLL snapshot restored. Configuration and game saves untouched.'
         }
-        Write-Host 'Previous DLL snapshot restored. Configuration and game saves untouched.'
+        finally { $installGate.Dispose() }
     }
     return
 }
@@ -140,7 +162,7 @@ if ($CheckOnly) {
     Write-Host 'Basic prerequisites detected. A successful build and runtime test are still required.'
     return
 }
-if ($Install) { Assert-GameClosed }
+if ($Install) { Assert-GameClosed; Assert-UpdateIsNewer }
 $projects = @(@{Project='src/Framework/Battlemarked.ModFramework.csproj'; Dll=$names[0]})
 # Keep an already-installed example in sync.
 if ($IncludeExample -or ($Install -and (Test-Path -LiteralPath (Join-Path $dest $names[1]) -PathType Leaf))) {
@@ -153,26 +175,36 @@ foreach ($p in $projects) {
     $dir = Split-Path $project -Parent
     $p.Output = Join-Path $dir "bin/Release/net6.0/$($p.Dll)"
     if (!(Test-Path -LiteralPath $p.Output -PathType Leaf)) { throw "Missing build output: $($p.Dll)" }
+    if ($ExpectedVersion) {
+        $built = [Reflection.AssemblyName]::GetAssemblyName($p.Output).Version
+        if ($built.ToString(3) -cne $ExpectedVersion -or $built.Revision -ne 0) { throw "Built DLL version does not match $ExpectedVersion : $($p.Dll)" }
+    }
 }
 if (!$Install) { Write-Host 'Build only. Add -Install to copy DLLs to your game.'; return }
 Assert-GameClosed
 if ($PSCmdlet.ShouldProcess($dest, 'Install build outputs with rollback snapshot')) {
-    New-Item -ItemType Directory -Path $dest -Force | Out-Null
-    $snapshot = New-Snapshot
+    $installGate = Open-InstallGate
     try {
         Assert-GameClosed
-        foreach ($p in $projects) {
-            $target = Join-Path $dest $p.Dll
-            Copy-Item -LiteralPath $p.Output -Destination $target -Force
-            if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $p.Output -Algorithm SHA256).Hash) {
-                throw "Installed checksum mismatch: $($p.Dll)"
+        Assert-UpdateIsNewer
+        New-Item -ItemType Directory -Path $dest -Force | Out-Null
+        $snapshot = New-Snapshot
+        try {
+            Assert-GameClosed
+            foreach ($p in $projects) {
+                $target = Join-Path $dest $p.Dll
+                Copy-Item -LiteralPath $p.Output -Destination $target -Force
+                if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $p.Output -Algorithm SHA256).Hash) {
+                    throw "Installed checksum mismatch: $($p.Dll)"
+                }
             }
         }
+        catch {
+            $failure = $_
+            try { Restore-Snapshot $snapshot } catch { Write-Warning "Rollback failed. Keep snapshot $snapshot for manual recovery." }
+            throw $failure
+        }
+        Write-Host "Installed to $dest. Existing configuration, health ledger and game saves were not changed."
     }
-    catch {
-        $failure = $_
-        try { Restore-Snapshot $snapshot } catch { Write-Warning "Rollback failed. Keep snapshot $snapshot for manual recovery." }
-        throw $failure
-    }
-    Write-Host "Installed to $dest. Existing configuration, health ledger and game saves were not changed."
+    finally { $installGate.Dispose() }
 }

@@ -1,4 +1,17 @@
-# v0.6.0-alpha validation
+# v0.6.1-alpha validation
+
+## Updater validation
+
+The user's v0.6.0 logs confirm successful startup, F10 callback, Relaxed preset (+1 AP), four verified refunds and four resets with zero framework errors. Native health was not queued in that run, so repeatable health trial validation is still pending.
+
+v0.6.1 deliberately leaves house-rule logic unchanged. Standalone tests cover strict numeric version ordering, downgrade rejection, pinned commit URLs, manifest parsing and unsafe archive path rejection. Static source review and diff checks performed; the development workspace does not have dotnet or Windows PowerShell. No compile, actual GitHub download, or Windows install is certified.
+
+Windows acceptance test:
+1. Install v0.6.1 manually, launch, confirm F10 > Updates reports 0.6.1 installed and no newer version while the GitHub manifest is 0.6.1. Switch automatic checking off/on; verify settings persist.
+2. When a newer tested version is published with matching manifest and project constants, check for it. Confirm correct newer version; click Download and install when game closes. Wait for queued status; verify current game continues to run.
+3. Exit normally and wait for PowerShell to finish. Confirm last-update.txt reports success and backup manifest exists. Relaunch and confirm both installed framework and existing example report the new version. Verify configuration and health ledger were retained.
+4. On a disposable installation, repeat a queued update with cancellation; verify no DLLs changed. Simulate network loss or a build failure; verify error reporting and previous DLLs remain intact. Re-enable opt-in automatic installation and test a subsequent version bump.
+5. Verify a same-version or older manifest does not offer an update. Do not launch while the worker is installing. Do not use a valuable adventure for regression testing.
 
 ## Baseline evidence
 

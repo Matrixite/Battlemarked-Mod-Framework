@@ -23,6 +23,7 @@ public sealed class Plugin : BasePlugin
     private ConfigEntry<bool> diagnostics;
     private bool initialised;
     private ModMenu menu;
+    internal FrameworkUpdater Updater { get; private set; }
     private readonly Dictionary<string, MenuModule> menuModules = new(StringComparer.Ordinal);
     internal IEnumerable<MenuModule> MenuModules => menuModules.Values.OrderBy(x => x.Id, StringComparer.Ordinal);
     internal bool IsRunning(string id) => host.Contains(id);
@@ -57,6 +58,8 @@ public sealed class Plugin : BasePlugin
         Enqueue(new GameplayProbe());
         Enqueue(new CoreLogicProbe());
         Enqueue(new HouseRules());
+        try { Updater = new FrameworkUpdater(Paths.GameRootPath, Config); }
+        catch (Exception ex) { Log.LogWarning("BMF updater unavailable: " + ex.Message); }
         menu = new ModMenu(this, Config, Log);
         Log.LogInfo($"BMF {Framework.Version} loaded; waiting for first Unity update.");
     }
@@ -112,6 +115,7 @@ public sealed class Plugin : BasePlugin
         foreach (var signal in CoreLogicProbe.Drain())
             host.Dispatch(e => e.Module.OnCoreSignal(signal), Stop);
         host.Dispatch(e => e.Module.OnUpdate(), Stop);
+        Updater?.Tick();
         menu?.Tick();
         if (diagnostics.Value && (DateTime.UtcNow - lastCompatibilityReport).TotalSeconds >= 15)
             RefreshCompatibilityReport();
@@ -170,6 +174,12 @@ public sealed class Plugin : BasePlugin
             };
             lines.AddRange(MenuModules.Select(m => $"{m.Id}: running={IsRunning(m.Id)} nextLaunch={m.Enabled.Value}"));
             lines.AddRange(HouseRules.CompatibilityLines());
+            if (Updater != null)
+            {
+                lines.Add("Framework update: " + Updater.Status);
+                lines.Add($"Update auto-check={Updater.AutoCheck} auto-install={Updater.AutoInstall}");
+                lines.Add("Last update: " + Updater.LastResult);
+            }
             lines.AddRange(CoreLogicProbe.Summary());
             File.WriteAllLines(Path.Combine(dataDir, "compatibility-report.txt"), lines);
             return true;

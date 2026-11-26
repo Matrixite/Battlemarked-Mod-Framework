@@ -21,7 +21,7 @@ internal sealed class ModMenu
     private bool open, broken, guiSeen, usingPolling;
     private int page;
     private int tab;
-    private static readonly string[] Tabs = { "Overview", "AP rules", "Health", "Presets", "Mods", "Reports" };
+    private static readonly string[] Tabs = { "Overview", "AP rules", "Health", "Presets", "Mods", "Reports", "Updates" };
     private string message = "Settings apply on next launch.";
     private Func<bool> poll;
     private bool inputChecked;
@@ -103,6 +103,7 @@ internal sealed class ModMenu
                 Label(283, "Rules: disposable local solo only. Back up saves separately.");
                 Label(314, "Health: explicitly queue before each NEW campaign.");
                 Label(345, "AP bonus edits apply live; module switches require restart.");
+                Label(375, plugin.Updater?.Status ?? "Automatic updater unavailable");
                 return;
             }
             if (tab == 1)
@@ -172,6 +173,24 @@ internal sealed class ModMenu
                 Label(317, "BepInEx/config/BattlemarkedModFramework/");
                 Label(345, "compatibility-report.txt | startup-report.txt");
                 Label(375, message);
+                return;
+            }
+
+            if (tab == 6)
+            {
+                var updater = plugin.Updater;
+                Label(97, "GitHub: " + UpdatePolicy.Repository);
+                Label(124, "Installed: " + Framework.Version + " | Available: " + (updater?.AvailableVersion ?? "Unavailable"));
+                if (updater == null) { Label(154, "Updater unavailable; see BepInEx log."); return; }
+                Label(153, updater.Status);
+                if (!updater.Busy && !updater.Scheduled && Button(181, "Check for updates now")) updater.CheckNow();
+                if (updater.CanInstall && Button(216, "Download and install when game closes")) updater.Install();
+                if (updater.Scheduled && Button(216, "Cancel scheduled update")) updater.CancelScheduled();
+                if (Button(251, "Automatic update checks: " + (updater.AutoCheck ? "ON" : "OFF"))) updater.ToggleAutoCheck();
+                if (Button(286, "Automatic installation: " + (updater.AutoInstall ? "ON" : "OFF (opt-in)"))) updater.ToggleAutoInstall();
+                Label(318, "Source updates build locally; no DLL replacement while playing.");
+                Label(345, "Exit game after queueing; wait for installer before relaunch.");
+                Label(373, updater.LastResult);
                 return;
             }
 

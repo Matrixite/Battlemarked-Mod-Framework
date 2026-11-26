@@ -338,3 +338,28 @@ foreach (var preset in HouseRulePreset.All)
 }
 Check(HouseRulePreset.Match(2, 175, false, false) == "Custom", "custom preset detection");
 Console.WriteLine("PASS: preset preference assertions.");
+
+// Updater policy: accept only intentional versions, commit-pinned GitHub source,
+// and safe source archive entries. Never downgrade or execute arbitrary URLs.
+Check(UpdatePolicy.IsNewer("0.6.2", "0.6.1"), "newer version detected");
+Check(UpdatePolicy.IsNewer("0.6.10", "0.6.9"), "numeric rather than lexical ordering");
+Check(!UpdatePolicy.IsNewer("0.6.1", "0.6.1"), "same version ignored");
+Check(!UpdatePolicy.IsNewer("0.5.13", "0.6.1"), "downgrade ignored");
+Check(!UpdatePolicy.IsNewer("0.6.2-alpha", "0.6.1"), "unknown version format rejected");
+Check(!UpdatePolicy.IsNewer("0.6.2.1", "0.6.1"), "unexpected version components rejected");
+const string updateSha = "60b3e1d94f7e25271f900531c60b0634831e1710";
+Check(UpdatePolicy.ValidCommit(updateSha), "valid pinned commit");
+Check(!UpdatePolicy.ValidCommit("main") && !UpdatePolicy.ValidCommit("../evil"), "branch or path cannot pin archive");
+Check(UpdatePolicy.ArchiveUrl(updateSha).Host == "codeload.github.com", "archive restricted to GitHub");
+Check(UpdatePolicy.ReadVersion("{\"schema\":1,\"version\":\"0.6.2\"}") == "0.6.2", "manifest parsed");
+Check(UpdatePolicy.ReadVersion("{\"schema\":2,\"version\":\"0.6.2\"}") == null, "unknown schema refused");
+Check(UpdatePolicy.ReadVersion("{\"schema\":1,\"version\":\"garbage\"}") == null, "invalid version refused");
+Check(UpdatePolicy.ReadVersion("broken") == null, "malformed manifest refused");
+string archiveRoot = "Battlemarked-Mod-Framework-" + updateSha;
+Check(UpdatePolicy.SafeEntry(archiveRoot + "/src/Framework/Api.cs", archiveRoot), "proper archive path");
+Check(!UpdatePolicy.SafeEntry(archiveRoot + "/../outside.dll", archiveRoot), "zip traversal refused");
+Check(!UpdatePolicy.SafeEntry(archiveRoot + "/src/evil.dll:stream", archiveRoot), "alternate stream refused");
+Check(!UpdatePolicy.SafeEntry(archiveRoot + "/src/evil.dll ", archiveRoot), "ambiguous Windows name refused");
+Check(!UpdatePolicy.SafeEntry(archiveRoot + "/CON", archiveRoot), "Windows device refused");
+Check(!UpdatePolicy.SafeEntry("wrong-root/src/file", archiveRoot), "unknown archive root refused");
+Console.WriteLine("PASS: updater policy assertions.");
