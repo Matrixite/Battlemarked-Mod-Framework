@@ -1,4 +1,14 @@
-# Battlemarked Mod Framework (BMF) — v0.5.12-alpha
+# Battlemarked Mod Framework (BMF) — v0.5.13-alpha
+
+## New in v0.5.13 — preserve verified additive permanent health modifiers
+
+v0.5.12 diagnostics confirm the fourth hero was skipped six times by the existing-modifier gate: current/max/permanent=25, raw max=22, modifier count=1. Three other heroes retained all 32 subsequent observations (two healed above their original maximum), and AP recorded 12 refunds/four resets/zero errors. The runtime probe does not identify the modifier's type or permanency, so only the observed +3 difference is known.
+
+The supplied Jade.GameModel.dll identifies StatModifier.get_StatType (20001185C0), get_Modifier (20000C), get_ModifierType (20001185AC), get_ModifierPermanency (20001185B0), Stat.SetMaxValue (2001010C), and set_maxValue (2001010C). Enum metadata gives AdditionAndSubtraction=0 and Permanent=1. Optional exact bindings read each modifier's native identity, type, magnitude and permanence. Only positive or zero integral permanent additive health modifiers (max 16), whose sum exactly explains the difference between raw and effective/permanent max, are eligible. Unknown, negative, temporary, multiplier and cap modifiers remain read-only. Unmodified heroes keep the original facade setter path.
+
+For the observed 22 raw + 3 modifier = 25 effective, if the modifier is eligible, 125% targets ceil(25 * 1.25) = 32 effective. The framework writes 29 raw via Stat.SetMaxValue, preserving every original modifier and current HP=25. It checks original and resulting raw/permanent/effective values and original modifier identities and magnitudes before/after the write and on subsequent observations. It does not change or recreate any modifiers. If verification fails, it attempts to restore the exact original raw backing value via set_maxValue only on the same stat with unchanged modifier stamps, verifies the original maximum, then restores current HP if needed. Any failure stops the party trial; discard the test adventure. Original room authorization, bounded party trial and AP behavior remain unchanged.
+
+Test 125% in a fresh disposable local solo campaign, using the same four-hero party. Expect an additional hero with rawBaseline=22 rawTarget=29 target=32 preservedModifiers=1 if its modifier is supported. Check additive modifier binding, applied/verified/lost/rollback fields and any candidate rejection reasons in the health report. Exact runtime modifier interpretation, SetMaxValue effects and rollback are unverified. Do not use on an existing save or multiplayer.
 
 ## New in v0.5.12 — health eligibility for injured heroes
 

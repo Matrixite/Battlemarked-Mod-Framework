@@ -7,7 +7,8 @@ internal sealed class NativeHealthPartyTrial
     internal const int Maximum = 4;
     internal sealed class Entry
     {
-        internal int Id, Baseline, Target, OriginalCurrent, LastCurrent, LastMax, HighestCurrent;
+        internal int Id, Baseline, Target, RawBaseline, RawTarget, OriginalCurrent, LastCurrent, LastMax, HighestCurrent;
+        internal HealthModifierStamp[] Modifiers;
         internal IntPtr StatKey;
         internal bool Applied, RolledBack, RollbackFailed;
         internal int Observations, Verified, Lost, AboveBaseline, ReplacedStat;
@@ -22,13 +23,21 @@ internal sealed class NativeHealthPartyTrial
 
     internal Entry Find(string sheetId) => entries.TryGetValue(sheetId, out var entry) ? entry : null;
 
-    internal Entry Reserve(string sheetId, IntPtr key, int baseline, int target, int current)
+    internal Entry Reserve(string sheetId, IntPtr key, int baseline, int target, int current,
+        int rawBaseline = 0, HealthModifierStamp[] verifiedModifiers = null)
     {
         if (Ended || string.IsNullOrWhiteSpace(sheetId) || key == IntPtr.Zero ||
             entries.Count >= Maximum || entries.ContainsKey(sheetId) || keys.Contains(key) ||
             baseline <= 0 || target <= baseline || current <= 0 || current > baseline) return null;
+        var stamps = verifiedModifiers ?? Array.Empty<HealthModifierStamp>();
+        if (rawBaseline == 0 && stamps.Length == 0) rawBaseline = baseline;
+        int rawTarget = HealthBudget.RawTarget(rawBaseline, baseline, target);
+        if (!HealthBudget.TryAdditiveBonus(stamps, out int existingBonus) ||
+            rawTarget == 0 || rawBaseline + existingBonus != baseline || rawTarget + existingBonus != target)
+            return null;
         var entry = new Entry { Id = entries.Count + 1, StatKey = key, Baseline = baseline,
-            Target = target, OriginalCurrent = current, LastCurrent = current, LastMax = baseline, HighestCurrent = current };
+            Target = target, RawBaseline = rawBaseline, RawTarget = rawTarget, Modifiers = stamps.ToArray(),
+            OriginalCurrent = current, LastCurrent = current, LastMax = baseline, HighestCurrent = current };
         entries.Add(sheetId, entry);
         keys.Add(key);
         return entry;

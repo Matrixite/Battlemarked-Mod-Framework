@@ -15,8 +15,11 @@ internal sealed class HeroHealthRule
     private bool writeHalted, ready, faulted, dirty = true;
     private readonly FreshHealthAuthorization authorization = new();
     private MethodInfo usesHealth, isDowned, sheet, sheetId, stats, getObject, getStat, getMax, value, max, permanent, raw, modifiers, setMax, setValue;
-    private PropertyInfo pointer, count;
-    private object healthType;
+    private PropertyInfo pointer, count, modifierItem, modifierPointer;
+    private MethodInfo modifierStatType, modifierKind, modifierPermanency, modifierAmount, statSetMax, restoreRaw;
+    private object healthType, additiveKind, permanentKind;
+    private bool additiveBinding;
+    private string additiveStatus = "not attempted";
     private readonly NativeHealthPartyTrial party = new();
     private int errors, skipped, missingIdentity, rejectedReservations, armRejections, freshStarts, existingStarts, claims, roomRejections;
     private DateTime lastWrite;
@@ -232,6 +235,44 @@ internal sealed class HeroHealthRule
             if (pointer == null || pointer.PropertyType != typeof(IntPtr) || !pointer.CanRead ||
                 count == null || count.PropertyType != typeof(int) || !count.CanRead)
                 throw new InvalidOperationException("Native health identity or modifier count unavailable");
+            // Optional, exact bindings from the supplied Jade.GameModel.dll.
+            // Unmodified heroes retain the original verified facade setter path.
+            try
+            {
+                var args = modifiers.ReturnType.GetGenericArguments();
+                if (args.Length != 1 || args[0].FullName != "Jade.GameModel.StatModifier" ||
+                    args[0].Assembly != stat.Assembly)
+                    throw new InvalidOperationException("Unexpected health modifier element type");
+                var modifier = args[0];
+                modifierStatType = Exact(modifier, "get_StatType", "20001185C0");
+                modifierAmount = Exact(modifier, "get_Modifier", "20000C");
+                modifierKind = Exact(modifier, "get_ModifierType", "20001185AC");
+                modifierPermanency = Exact(modifier, "get_ModifierPermanency", "20001185B0");
+                if (modifierStatType.ReturnType != enumType || modifierAmount.ReturnType != typeof(float) ||
+                    !modifierKind.ReturnType.IsEnum || modifierKind.ReturnType.Name != "StatModifierType" ||
+                    !modifierPermanency.ReturnType.IsEnum || modifierPermanency.ReturnType.Name != "StatModifierPermanency")
+                    throw new InvalidOperationException("Unexpected modifier enum/amount type");
+                additiveKind = Enum.Parse(modifierKind.ReturnType, "AdditionAndSubtraction");
+                permanentKind = Enum.Parse(modifierPermanency.ReturnType, "Permanent");
+                if (Convert.ToInt32(additiveKind) != 0 || Convert.ToInt32(permanentKind) != 1)
+                    throw new InvalidOperationException("Unexpected additive or permanent enum value");
+                modifierItem = modifiers.ReturnType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .SingleOrDefault(p => p.Name == "Item" && p.CanRead && p.PropertyType == modifier &&
+                        p.GetIndexParameters().Length == 1 && p.GetIndexParameters()[0].ParameterType == typeof(int));
+                modifierPointer = modifier.GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance);
+                statSetMax = Exact(stat, "SetMaxValue", "2001010C");
+                restoreRaw = Exact(stat, "set_maxValue", "2001010C");
+                if (modifierItem == null || modifierPointer?.PropertyType != typeof(IntPtr) || !modifierPointer.CanRead ||
+                    statSetMax.IsStatic || restoreRaw.IsStatic || statSetMax.ReturnType != typeof(void) || restoreRaw.ReturnType != typeof(void))
+                    throw new InvalidOperationException("Modifier index/identity or raw maximum setter unavailable");
+                additiveBinding = true;
+                additiveStatus = "verified permanent additive metadata";
+            }
+            catch (Exception ex)
+            {
+                additiveStatus = "unavailable: " + ex.Message;
+                ctx.Log.LogWarning("BMF optional additive health path: " + ex.Message);
+            }
             ready = true;
             ctx.Log.LogInfo("BMF native health trial metadata verified; armed=" + Armed);
         }
@@ -252,11 +293,74 @@ internal sealed class HeroHealthRule
         var live = getObject.Invoke(facade, new[] { healthType });
         return live != null && (IntPtr)pointer.GetValue(live) == key;
     }
-    private bool Matches(object facade, object stat, int current, int expectedMax)
-        => I(getStat, facade) == current && F(value, stat) == current && MaxMatches(facade, stat, expectedMax);
-    private bool MaxMatches(object facade, object stat, int expectedMax)
+    private bool TryReadModifierStamps(object stat, out HealthModifierStamp[] stamps, out string rejection)
+    {
+        stamps = null;
+        rejection = "modifier count unavailable";
+        try
+        {
+            var list = modifiers.Invoke(stat, null);
+            if (list == null) return false;
+            int n = (int)count.GetValue(list);
+            if (n < 0) return false;
+            if (n == 0) { stamps = Array.Empty<HealthModifierStamp>(); rejection = null; return true; }
+            if (n > 16) { rejection = "too many health modifiers"; return false; }
+            if (!additiveBinding) { rejection = "additive metadata unavailable"; return false; }
+            var result = new HealthModifierStamp[n];
+            for (int i = 0; i < n; i++)
+            {
+                var entry = modifierItem.GetValue(list, new object[] { i });
+                if (entry == null) { rejection = "missing modifier object"; return false; }
+                if (!object.Equals(modifierStatType.Invoke(entry, null), healthType))
+                { rejection = "modifier is not health"; return false; }
+                if (!object.Equals(modifierKind.Invoke(entry, null), additiveKind))
+                { rejection = "non-additive health modifier"; return false; }
+                if (!object.Equals(modifierPermanency.Invoke(entry, null), permanentKind))
+                { rejection = "non-permanent health modifier"; return false; }
+                float amount = F(modifierAmount, entry);
+                if (!float.IsFinite(amount) || amount < 0 || amount > 10000 || amount != MathF.Truncate(amount))
+                { rejection = "non-integral or negative additive health modifier"; return false; }
+                result[i] = new HealthModifierStamp((IntPtr)modifierPointer.GetValue(entry), (int)amount);
+            }
+            if (!HealthBudget.TryAdditiveBonus(result, out _) || (int)count.GetValue(list) != n)
+            { rejection = "modifier identity or total not verified"; return false; }
+            stamps = result;
+            rejection = null;
+            return true;
+        }
+        catch (Exception ex) { rejection = "modifier read failed: " + ex.GetType().Name; return false; }
+    }
+
+    private bool SameModifiers(object stat, NativeHealthPartyTrial.Entry trial)
+        => trial.Modifiers.Length == 0 ? ModifierCount(stat) == 0 :
+            TryReadModifierStamps(stat, out var live, out _) && HealthBudget.SameModifierStamps(trial.Modifiers, live);
+    private bool Matches(object facade, object stat, int current, int expectedMax, int expectedRaw, NativeHealthPartyTrial.Entry trial)
+        => I(getStat, facade) == current && F(value, stat) == current && MaxMatches(facade, stat, expectedMax, expectedRaw, trial);
+    private bool MaxMatches(object facade, object stat, int expectedMax, int expectedRaw, NativeHealthPartyTrial.Entry trial)
         => I(getMax, facade) == expectedMax && F(max, stat) == expectedMax &&
-           F(permanent, stat) == expectedMax && F(raw, stat) == expectedMax && ModifierCount(stat) == 0;
+           F(permanent, stat) == expectedMax && F(raw, stat) == expectedRaw && SameModifiers(stat, trial);
+
+    private bool WriteMaximum(object facade, object stat, NativeHealthPartyTrial.Entry trial)
+    {
+        if (trial.Modifiers.Length == 0)
+            return setMax.Invoke(facade, new object[] { healthType, (float)trial.Target }) is true;
+        // Use the native Stat.SetMaxValue method with the raw target, never
+        // write the computed/effective maximum into the underlying raw field.
+        statSetMax.Invoke(stat, new object[] { (float)trial.RawTarget });
+        return true; // immediately verify all native getters and modifier stamps
+    }
+
+    private bool RestoreOriginalMaximum(object facade, object stat, NativeHealthPartyTrial.Entry trial)
+    {
+        if (MaxMatches(facade, stat, trial.Baseline, trial.RawBaseline, trial)) return true;
+        if (trial.Modifiers.Length == 0)
+            return setMax.Invoke(facade, new object[] { healthType, (float)trial.Baseline }) is true;
+        // Only called after the same object and original modifier stamps were
+        // reverified. The exact generated raw-field setter restores the captured
+        // backing value, not an effective value with the modifier counted twice.
+        restoreRaw.Invoke(stat, new object[] { (float)trial.RawBaseline });
+        return MaxMatches(facade, stat, trial.Baseline, trial.RawBaseline, trial);
+    }
     // The game model exposes a string-valued CharacterSheetId.Id. Do not retain
     // the wrapper or write the ID/pointer to logs. Reject both duplicate identities.
     private string ReadSheetId(object piece)
@@ -307,7 +411,7 @@ internal sealed class HeroHealthRule
                 existing.Observations++;
                 int current = I(getStat, facade), currentMax = I(getMax, facade);
                 existing.LastCurrent = current; existing.LastMax = currentMax;
-                bool retained = SameIdentity(piece, facade, id, key) && MaxMatches(facade, stat, existing.Target)
+                bool retained = SameIdentity(piece, facade, id, key) && MaxMatches(facade, stat, existing.Target, existing.RawTarget, existing)
                     && current >= 0 && current <= existing.Target && F(value, stat) == current;
                 if (retained)
                 {
@@ -327,31 +431,39 @@ internal sealed class HeroHealthRule
             int initial = I(getStat, facade), nativeMax = I(getMax, facade);
             float objectCurrent = F(value, stat), objectMax = F(max, stat), permanentMax = F(permanent, stat), rawMax = F(raw, stat);
             int modifierCount = ModifierCount(stat);
-            string rejection = HealthBudget.NativeTrialRejection(percent, initial, nativeMax,
-                objectCurrent, objectMax, permanentMax, rawMax, modifierCount);
-            if (rejection != null)
+            string readings = $"current={initial} max={nativeMax} objectValue={objectCurrent} objectMax={objectMax} permanentMax={permanentMax} rawMax={rawMax} modifiers={modifierCount}";
+            var stamps = Array.Empty<HealthModifierStamp>();
+            int bonus = 0;
+            if (modifierCount > 0)
             {
-                RejectCandidate(rejection, $"current={initial} max={nativeMax} objectValue={objectCurrent} objectMax={objectMax} permanentMax={permanentMax} rawMax={rawMax} modifiers={modifierCount}");
-                return;
+                if (!TryReadModifierStamps(stat, out stamps, out string modifierRejection))
+                { RejectCandidate(modifierRejection, readings); return; }
+                if (stamps.Length != modifierCount || !HealthBudget.TryAdditiveBonus(stamps, out bonus))
+                { RejectCandidate("modifier count or identity changed", readings); return; }
+                readings += $" verifiedAdditive={bonus}";
             }
+            string rejection = HealthBudget.NativeTrialRejection(percent, initial, nativeMax,
+                objectCurrent, objectMax, permanentMax, rawMax, modifierCount, bonus);
+            if (rejection != null)
+            { RejectCandidate(rejection, readings); return; }
             int target = HealthBudget.Target(nativeMax, percent);
-            var trial = party.Reserve(id, key, nativeMax, target, initial);
+            var trial = party.Reserve(id, key, nativeMax, target, initial, (int)rawMax, stamps);
             if (trial == null) { rejectedReservations++; dirty = true; return; }
             int baseline = trial.Baseline;
-            Sample($"hero#{trial.Id} native trial target={target} | before {Snapshot(facade, stat)}");
+            Sample($"hero#{trial.Id} native trial target={target} rawTarget={trial.RawTarget} preservedModifiers={trial.Modifiers.Length} | before {Snapshot(facade, stat)}");
             bool writeAttempted = false;
             try
             {
-                if (!SameIdentity(piece, facade, id, key) || !Matches(facade, stat, initial, baseline))
+                if (!SameIdentity(piece, facade, id, key) || !Matches(facade, stat, initial, baseline, trial.RawBaseline, trial))
                     throw new InvalidOperationException("Native health identity or baseline changed");
                 writeAttempted = true;
-                bool wrote = setMax.Invoke(facade, new object[] { healthType, (float)target }) is true;
-                if (!wrote || !SameIdentity(piece, facade, id, key) || !MaxMatches(facade, stat, target))
+                bool wrote = WriteMaximum(facade, stat, trial);
+                if (!wrote || !SameIdentity(piece, facade, id, key) || !MaxMatches(facade, stat, target, trial.RawTarget, trial))
                     throw new InvalidOperationException("Native maximum not verified");
                 // Preserve pre-write HP if the native maximum setter changed it.
                 if (I(getStat, facade) != initial && setValue.Invoke(facade, new object[] { healthType, (float)initial }) is not true)
                     throw new InvalidOperationException("Current HP preservation failed");
-                if (!SameIdentity(piece, facade, id, key) || !Matches(facade, stat, initial, target))
+                if (!SameIdentity(piece, facade, id, key) || !Matches(facade, stat, initial, target, trial.RawTarget, trial))
                     throw new InvalidOperationException("Native health trial verification failed");
                 trial.Applied = true; trial.LastMax = target;
                 Sample($"hero#{trial.Id} native trial verified=True | after {Snapshot(facade, stat)}");
@@ -362,15 +474,17 @@ internal sealed class HeroHealthRule
                 {
                     try
                     {
-                        // Roll back only the same hero and native object with no other modifiers.
-                        if (!SameIdentity(piece, facade, id, key) || ModifierCount(stat) != 0)
-                            throw new InvalidOperationException("Rollback identity/baseline unavailable");
-                        bool maxOk = Matches(facade, stat, initial, baseline) ||
-                            setMax.Invoke(facade, new object[] { healthType, (float)baseline }) is true;
-                        if (!SameIdentity(piece, facade, id, key)) throw new InvalidOperationException("Rollback identity changed");
+                        // Never rewrite or reconstruct the existing modifier list.
+                        // Restore only the same native stat with the original stamps.
+                        if (!SameIdentity(piece, facade, id, key) || !SameModifiers(stat, trial))
+                            throw new InvalidOperationException("Rollback identity/modifiers unavailable");
+                        bool maxOk = RestoreOriginalMaximum(facade, stat, trial);
+                        if (!maxOk || !SameIdentity(piece, facade, id, key) ||
+                            !MaxMatches(facade, stat, baseline, trial.RawBaseline, trial))
+                            throw new InvalidOperationException("Rollback maximum, identity or modifiers not verified");
                         bool hpOk = I(getStat, facade) == initial ||
                             setValue.Invoke(facade, new object[] { healthType, (float)initial }) is true;
-                        trial.RolledBack = maxOk && hpOk && SameIdentity(piece, facade, id, key) && Matches(facade, stat, initial, baseline);
+                        trial.RolledBack = maxOk && hpOk && SameIdentity(piece, facade, id, key) && Matches(facade, stat, initial, baseline, trial.RawBaseline, trial);
                         trial.RollbackFailed = !trial.RolledBack;
                         Sample($"hero#{trial.Id} native trial rollback verified={trial.RolledBack} | {Snapshot(facade, stat)}");
                     }
@@ -402,10 +516,11 @@ internal sealed class HeroHealthRule
                 "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + Status,
                 $"ConfiguredPercent={percent} NextPercent={NextPercent} Armed={Armed} Queued={Queued} ScopeEnded={party.Ended} WritesHalted={writeHalted} Attempts={party.Entries.Count} Applied={Applied} Observations={party.Entries.Sum(e => e.Observations)} VerifiedObservations={Verified} Lost={Lost} Skipped={skipped} MissingIdentity={missingIdentity} RejectedReservations={rejectedReservations} ArmRejections={armRejections} Errors={errors}",
                 "Activation=" + activationStatus,
+                "Additive modifier binding: " + additiveStatus,
                 $"Fresh start binding: {freshStartBinding} NewCampaigns={freshStarts} ExistingCampaigns={existingStarts} Claims={claims} RoomRejections={roomRejections} LastRoomRejection={lastRoomRejection}",
                 "Up to four unique character-sheet IDs and native health objects; IDs/pointers not logged. Native maximum may persist. Discard test adventure." };
             foreach (var e in party.Entries.OrderBy(e => e.Id))
-                lines.Add($"hero#{e.Id} applied={e.Applied} baseline={e.Baseline} target={e.Target} originalCurrent={e.OriginalCurrent} lastCurrent={e.LastCurrent} lastMax={e.LastMax} highestCurrent={e.HighestCurrent} observations={e.Observations} verified={e.Verified} lost={e.Lost} aboveBaseline={e.AboveBaseline} replacedStat={e.ReplacedStat} rolledBack={e.RolledBack} rollbackFailed={e.RollbackFailed}");
+                lines.Add($"hero#{e.Id} applied={e.Applied} baseline={e.Baseline} target={e.Target} rawBaseline={e.RawBaseline} rawTarget={e.RawTarget} preservedModifiers={e.Modifiers.Length} originalCurrent={e.OriginalCurrent} lastCurrent={e.LastCurrent} lastMax={e.LastMax} highestCurrent={e.HighestCurrent} observations={e.Observations} verified={e.Verified} lost={e.Lost} aboveBaseline={e.AboveBaseline} replacedStat={e.ReplacedStat} rolledBack={e.RolledBack} rollbackFailed={e.RollbackFailed}");
             foreach (var reason in candidateRejections.OrderBy(e => e.Key))
                 lines.Add($"Health candidate rejected: {reason.Key} count={reason.Value}");
             lines.AddRange(samples);
