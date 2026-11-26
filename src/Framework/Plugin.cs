@@ -27,6 +27,7 @@ public sealed class Plugin : BasePlugin
     private readonly Dictionary<string, MenuModule> menuModules = new(StringComparer.Ordinal);
     internal IEnumerable<MenuModule> MenuModules => menuModules.Values.OrderBy(x => x.Id, StringComparer.Ordinal);
     internal bool IsRunning(string id) => host.Contains(id);
+    internal bool IsEnabledForNextLaunch(string id) => menuModules.TryGetValue(id, out var module) && module.Enabled.Value;
     private DateTime lastCompatibilityReport;
     internal bool VerifiedGame => string.Equals(hash, CoreLogicProbe.VerifiedHash, StringComparison.OrdinalIgnoreCase);
     internal string CompatibilityStatus => VerifiedGame ? "Verified game fingerprint" :

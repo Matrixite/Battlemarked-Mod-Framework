@@ -1,4 +1,8 @@
-# v0.6.8-alpha validation
+# v0.6.9-alpha validation
+
+## v0.6.9 house-rule tab visibility
+
+Static checks verify the menu uses the current House rules module enable preference, preserves tab IDs and keeps Reports independent. CoreTests covers all four combinations of the two preferences. The .NET SDK is unavailable in the development workspace, so executable tests and Windows build remain pending. In-game acceptance: disable House rules in Mods and verify AP rules and Health disappear immediately, with Developer mode both off and on; re-enable and verify they reappear. Restart with the module disabled and confirm the same visibility, then re-enable and restart to restore gameplay controls. Confirm Presets, Mods and Updates still open correctly.
 
 ## v0.6.8 player-facing tabs and update wording
 

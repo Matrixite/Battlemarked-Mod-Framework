@@ -1,4 +1,8 @@
-# Battlemarked Mod Framework (BMF) — v0.6.8-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.9-alpha
+
+## v0.6.9 — house-rule tab visibility
+
+Disabling House rules in F10 > Mods hides both AP rules and Health immediately, regardless of Developer mode. Re-enabling the module shows them again. Tab visibility follows the saved next-launch enable setting; starting or stopping the module itself still requires a game restart, and the existing AP and health safety guards are unchanged. Overview, Presets, Mods and Updates stay accessible; Reports remains developer-only.
 
 ## v0.6.8 — cleaner normal-player interface
 

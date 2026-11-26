@@ -9,7 +9,8 @@ namespace Battlemarked.ModFramework;
 // Read-only by default; opt-in repeated AP bonus, local solo scope only.
 internal sealed class HouseRules : BattlemarkedModule
 {
-    public override string Id => "org.battlemarked.houserules";
+    internal const string ModuleId = "org.battlemarked.houserules";
+    public override string Id => ModuleId;
     public override string Name => "House rules (AP and hero health)";
     private ModuleContext ctx;
     private HeroHealthRule health;

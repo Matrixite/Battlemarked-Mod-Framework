@@ -3,8 +3,12 @@ namespace Battlemarked.ModFramework;
 // Presentation only: never use this policy to start, stop or report modules.
 internal static class MenuModuleVisibility
 {
-    internal static bool IsTabVisible(string title, bool developerMode) =>
-        developerMode || title != "Reports";
+    internal static bool IsTabVisible(string title, bool developerMode, bool houseRulesEnabled)
+    {
+        if (title == "Reports") return developerMode;
+        if (title == "AP rules" || title == "Health") return houseRulesEnabled;
+        return true;
+    }
 
     internal static bool IsVisible(string id, bool developerMode) =>
         developerMode || (id != "org.battlemarked.diagnostics.corelogic" &&

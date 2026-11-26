@@ -140,10 +140,11 @@ internal sealed class ModMenu
             GUI.Box(new Rect(x, y, width, height), "Battlemarked Mod Manager | BMF " + Framework.Version + " | Drag to move");
             if (GUI.Button(new Rect(x + width - 80, y + 24, 68, 26), "Close")) { SetOpen(false); return; }
             GUI.Label(new Rect(x + 12, y + 25, width - 100, 25), plugin.CompatibilityStatus + " | F10");
-            // Keep the original tab IDs when Reports is hidden.
+            // Keep the original tab IDs when optional tabs are hidden.
+            bool houseRulesEnabled = plugin.IsEnabledForNextLaunch(HouseRules.ModuleId);
             var visibleTabs = new List<int>();
             for (int i = 0; i < Tabs.Length; i++)
-                if (MenuModuleVisibility.IsTabVisible(Tabs[i], developerMode.Value)) visibleTabs.Add(i);
+                if (MenuModuleVisibility.IsTabVisible(Tabs[i], developerMode.Value, houseRulesEnabled)) visibleTabs.Add(i);
             if (!visibleTabs.Contains(tab)) tab = 4; // Mods, where developer mode can be restored.
             float tabWidth = (width - 24) / visibleTabs.Count;
             for (int column = 0; column < visibleTabs.Count; column++)
