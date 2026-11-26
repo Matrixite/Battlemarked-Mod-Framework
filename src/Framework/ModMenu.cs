@@ -7,12 +7,19 @@ namespace Battlemarked.ModFramework;
 
 internal sealed class MenuModule
 {
-    internal readonly string Id, Name;
+    internal readonly string Id, Name, DataDirectory;
+    internal readonly ConfigFile Config;
     internal readonly ConfigEntry<bool> Enabled;
-    internal MenuModule(string id, string name, ConfigEntry<bool> enabled) { Id = id; Name = name; Enabled = enabled; }
+    internal readonly Func<BattlemarkedModule> Factory;
+    internal BattlemarkedModule LastInstance;
+    internal bool RestartBlocked;
+    internal MenuModule(string id, string name, string dataDirectory, ConfigFile config, ConfigEntry<bool> enabled, Func<BattlemarkedModule> factory)
+    {
+        Id = id; Name = name; DataDirectory = dataDirectory; Config = config; Enabled = enabled; Factory = factory;
+    }
 }
 
-// Desktop IMGUI: live rule preferences, explicit health queue, next-launch module changes.
+// Desktop IMGUI: live rule preferences, explicit health queue, safe menu-gated module changes.
 internal sealed class ModMenu
 {
     private readonly Plugin plugin;
@@ -25,7 +32,7 @@ internal sealed class ModMenu
     private int page;
     private int tab;
     private static readonly string[] Tabs = { "Overview", "AP rules", "Health", "Presets", "Mods", "Reports", "Updates" };
-    private string message = "Settings apply on next launch.";
+    private string message = "Module changes apply at the main menu.";
     private Func<bool> poll;
     private bool inputChecked;
     internal ModMenu(Plugin plugin, ConfigFile config, ManualLogSource log)
@@ -141,7 +148,7 @@ internal sealed class ModMenu
             if (GUI.Button(new Rect(x + width - 80, y + 24, 68, 26), "Close")) { SetOpen(false); return; }
             GUI.Label(new Rect(x + 12, y + 25, width - 100, 25), plugin.CompatibilityStatus + " | F10");
             // Keep the original tab IDs when optional tabs are hidden.
-            bool houseRulesEnabled = plugin.IsEnabledForNextLaunch(HouseRules.ModuleId);
+            bool houseRulesEnabled = plugin.IsModuleRequested(HouseRules.ModuleId);
             var visibleTabs = new List<int>();
             for (int i = 0; i < Tabs.Length; i++)
                 if (MenuModuleVisibility.IsTabVisible(Tabs[i], developerMode.Value, houseRulesEnabled)) visibleTabs.Add(i);
@@ -168,7 +175,7 @@ internal sealed class ModMenu
                 Label(252, HouseRules.HealthCounts);
                 Label(283, "Rules: disposable local solo only. Back up saves separately.");
                 Label(314, "Health: explicitly queue before each NEW campaign.");
-                Label(345, "AP bonus edits apply live; module switches require restart.");
+                Label(345, "AP bonus edits apply live; supported mod switches apply at main menu.");
                 Label(375, UpdatePolicy.ForDisplay(plugin.Updater?.Status ?? "Automatic updater unavailable", "Update status details: see development Reports."));
                 return;
             }
@@ -271,7 +278,7 @@ internal sealed class ModMenu
             var modules = new List<MenuModule>();
             foreach (var m in plugin.MenuModules)
                 if (MenuModuleVisibility.IsVisible(m.Id, developerMode.Value)) modules.Add(m);
-            Label(95, (developerMode.Value ? "Developer view" : "Installed modules") + " | module switches apply next launch");
+            Label(95, (developerMode.Value ? "Developer view" : "Installed modules") + " | " + plugin.ModuleSwitchStatus);
             if (modules.Count == 0) Label(125, "No visible modules installed.");
             int rows = Math.Max(1, (int)((height - 184) / 49));
             int pages = Math.Max(1, (modules.Count + rows - 1) / rows);
@@ -280,10 +287,10 @@ internal sealed class ModMenu
             {
                 var m = modules[page * rows + i]; float top = y + 125 + i * 49;
                 GUI.Label(new Rect(x + 15, top, width - 120, 23), m.Name);
-                GUI.Label(new Rect(x + 15, top + 22, width - 120, 23), (plugin.IsRunning(m.Id) ? "Running" : "Not running") + " | Next launch: " + (m.Enabled.Value ? "enabled" : "disabled"));
+                GUI.Label(new Rect(x + 15, top + 22, width - 120, 23), plugin.DescribeModule(m));
                 if (GUI.Button(new Rect(x + width - 105, top + 7, 93, 27), m.Enabled.Value ? "Disable" : "Enable"))
                 {
-                    try { m.Enabled.Value = !m.Enabled.Value; message = "Saved; restart Battlemarked to apply module switches."; }
+                    try { m.Enabled.Value = !m.Enabled.Value; m.Config.Save(); message = "Module preference saved."; }
                     catch (Exception ex) { message = "Could not save settings; see BepInEx log."; log.LogWarning(ex.Message); }
                 }
             }

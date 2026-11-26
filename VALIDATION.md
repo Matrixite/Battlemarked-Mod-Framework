@@ -1,4 +1,15 @@
-# v0.6.10-alpha validation
+# v0.6.11-alpha validation
+
+## v0.6.11 menu-gated module switching
+
+New CoreTests assertions cover missing/invalid/stale identity, absent/duplicate/expired/nonconsecutive frames, exit and re-entry, every switch policy state, and host stop/re-add cleanup. Source checks only: dotnet is absent here; Windows compilation and native main-menu hook binding/observations are unverified. Logs previously identified the same Main scene in gameplay and menus. The interop report identifies AppStateMainMenu and its transition flag; exact lifecycle signatures are checked at runtime and fail closed. Do not claim the gate is verified in-game before testing.
+
+Acceptance on a disposable local solo campaign:
+1. At the actual main menu, open Mods. Expect Verified main menu; disable House rules, wait for Not running, re-enable and wait for Running, without restarting. AP/Health/Presets follow the requested setting.
+2. Start a new disposable local solo game (AP refund mode recommended; do not queue health for this initial lifecycle check). During play, disable House rules and confirm Running | Pending disable, with no module stop until returning to the main menu. Cancel a pending switch once by toggling back. Re-do the request; return to the main menu and confirm Not running. In a second disposable game confirm the disabled module makes no new changes; request enable during this game and verify it starts only after returning to menu.
+3. Verify developer-mode probe and example toggles at the main menu; repeat toggles and check logs for exactly one start/stop per applied transition, no duplicate patches or callbacks.
+4. If still waiting at the actual menu or detection unavailable, export a support ZIP (enable Developer mode first), and supply BepInEx LogOutput.log for binding diagnosis. Restart remains a safe fallback.
+5. Native health acceptance remains separate: never use valued saves or multiplayer. Confirm the queued health request is cancelled on stop, the baseline ledger is retained and no safety fault can be reset by toggles.
 
 ## v0.6.10 Presets visibility
 

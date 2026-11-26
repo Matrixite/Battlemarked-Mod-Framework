@@ -114,6 +114,9 @@ public sealed class ModuleContext
 public static class Framework
 {
     public const string Guid = "org.battlemarked.modframework";
-    public const string Version = "0.6.10";
+    public const string Version = "0.6.11";
     public static bool Register(BattlemarkedModule module) => Plugin.Instance?.Enqueue(module) ?? false;
+    /// <summary>Opt into main-menu switching. Each invocation must create a new instance
+    /// with the same ID. OnStop must clean up all resources and non-Harmony hooks.</summary>
+    public static bool RegisterFactory(Func<BattlemarkedModule> factory) => Plugin.Instance?.EnqueueFactory(factory) ?? false;
 }

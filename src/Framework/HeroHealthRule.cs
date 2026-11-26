@@ -21,7 +21,9 @@ internal sealed class HeroHealthRule
     private bool additiveBinding;
     private string additiveStatus = "not attempted";
     private NativeHealthPartyTrial party = new();
+    private static HealthSafetyLedger sessionLedger;
     private readonly HealthSafetyLedger ledger;
+    internal bool PreventsReactivation => faulted || writeHalted || !ledger.Ready;
     private int previousTrials, previousApplied, previousVerified, previousLost;
     private int errors, skipped, missingIdentity, rejectedReservations, armRejections, freshStarts, existingStarts, claims, roomRejections;
     private DateTime lastWrite;
@@ -204,7 +206,7 @@ internal sealed class HeroHealthRule
     internal HeroHealthRule(ModuleContext context, Type piece, Type facade, Type stat, Type enumType)
     {
         ctx = context;
-        ledger = new HealthSafetyLedger(Path.Combine(ctx.DataDirectory, "health-baselines-v060.txt"));
+        ledger = sessionLedger ??= new HealthSafetyLedger(Path.Combine(ctx.DataDirectory, "health-baselines-v060.txt"));
         nextPercent = ctx.Config.Bind("HouseRules", "HeroMaxHealth050", 100,
             "Experimental max health target 100/125/150/175/200%. Native maximum trial requires an explicit queue before starting a new solo campaign. Fresh disposable solo only.");
         // Retire the old boolean. It is not an authorization in this build.
