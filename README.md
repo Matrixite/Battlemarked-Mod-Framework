@@ -1,6 +1,14 @@
-# Battlemarked Mod Framework (BMF) — v0.5.6-alpha
+# Battlemarked Mod Framework (BMF) — v0.5.7-alpha
 
-## New in v0.5.6 — bounded party-wide native health trial
+## New in v0.5.7 — no-restart health activation
+
+A v0.5.6 receipt confirmed that its request had been claimed on a launch, but the subsequent report was unarmed and had no AP activity or health attempts. The exact sequence of launches is unknown; no party-wide native write has yet been tested. The one-shot next-launch mechanism is replaced with an explicit in-memory current-launch arm. Legacy pending and claimed files and the old config flag cannot arm this release.
+
+Launch the game to its main menu, open F10 > House rules > Hero health, select 125%, and click **Arm health trial (current launch)**. The status must show **Armed: 125% | 0/4 heroes applied**. Close the menu and start a completely new disposable local solo adventure **without restarting**. Move each hero, try healing above the original maximum and finish a round. Upload the health and AP probes and main log.
+
+Arming is denied if any AP hook has been observed (including off-thread activity), a captured model indicates an adventure is active, or the party trial already made an attempt/ended. A model may not be captured at the main menu; the framework cannot prove save freshness. Exact fingerprint, local-solo/active-hero checks, four unique identities maximum, no repeat writes, baseline checks and rollback remain unchanged. The arm is never persisted, and changing percentage or clicking Disarm stops further writes without reversing a modified maximum. Previous receipts are inert in v0.5.7. If an arm is rejected, check Activation and ArmRejections in the probe. Native maximum can persist in saves; discard the test adventure. AP rules remain unchanged.
+
+## New in v0.5.6 — bounded party-wide native health trial (historical)
 
 The v0.5.5 test successfully claimed the activation request and verified the native maximum: 22 -> 28 HP at 125%, with current HP preserved at 22. Eight subsequent observations retained the raw/permanent/effective max; zero losses and zero errors. Healing above 22 HP and party-wide behavior were not tested. AP continued to work (four refunds, one reset, zero errors).
 

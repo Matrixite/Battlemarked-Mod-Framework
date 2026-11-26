@@ -170,3 +170,14 @@ var earlyEnd = new NativeHealthPartyTrial();
 Check(earlyEnd.Reserve("hero-A", new IntPtr(1), 16, 20, 16) != null && earlyEnd.EndScope(), "departure seals a partially applied party");
 Check(earlyEnd.Reserve("hero-B", new IntPtr(2), 12, 15, 12) == null, "cannot extend to another adventure");
 Console.WriteLine("PASS: party health identity and lifecycle guards.");
+
+var idle = new NativeHealthPartyTrial();
+Check(idle.CanArm(125, false, false), "main menu permits explicit current-launch arm");
+Check(!idle.CanArm(100, false, false), "normal health cannot arm");
+Check(!idle.CanArm(126, false, false), "invalid percentage cannot arm");
+Check(!idle.CanArm(125, true, false), "observed AP activity blocks new authorization");
+Check(!idle.CanArm(125, false, true), "active adventure blocks new authorization");
+Check(idle.Reserve("hero-A", new IntPtr(7), 16, 20, 16) != null, "first attempt reserved");
+Check(!idle.CanArm(125, false, false), "an attempted hero prevents new authorization");
+Check(idle.EndScope() && !idle.CanArm(125, false, false), "ended scope cannot rearm");
+Console.WriteLine("PASS: current-launch health activation guards.");

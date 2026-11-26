@@ -9,19 +9,18 @@ internal sealed class HeroHealthRule
 {
     private readonly ModuleContext ctx;
     private readonly ConfigEntry<int> nextPercent;
-    private readonly NativeHealthArmRequest armRequest;
-    private string armRequestStatus = "Not checked";
-    private readonly int percent;
+    private string activationStatus = "Arm at main menu";
+    private int percent;
     private bool armed, writeHalted, ready, faulted, dirty = true;
     private MethodInfo usesHealth, isDowned, sheet, sheetId, stats, getObject, getStat, getMax, value, max, permanent, raw, modifiers, setMax, setValue;
     private PropertyInfo pointer, count;
     private object healthType;
     private readonly NativeHealthPartyTrial party = new();
-    private int errors, skipped, missingIdentity, rejectedReservations;
+    private int errors, skipped, missingIdentity, rejectedReservations, armRejections;
     private DateTime lastWrite;
     private readonly List<string> samples = new();
     internal int NextPercent => HealthBudget.Normalize(nextPercent.Value);
-    internal bool NextArmed => armRequest.Pending;
+    internal bool Armed => armed;
     internal bool Available => ready;
     private int Applied => party.Entries.Count(e => e.Applied);
     private int Verified => party.Entries.Sum(e => e.Verified);
@@ -30,64 +29,71 @@ internal sealed class HeroHealthRule
         party.Ended ? $"Party trial ended: {Applied} applied" :
         writeHalted ? $"Further writes stopped: {Applied} applied" :
         armed ? $"Armed: {percent}% | {Applied}/{NativeHealthPartyTrial.Maximum} heroes applied" :
-        NextArmed ? "Request saved; restart once" : "Read-only; arm for next launch";
+        $"Read-only; {activationStatus}";
     internal string Counts => $"Verified: {Verified} | Lost: {Lost} | Errors: {errors}";
     internal void ChangePercent(int delta)
     {
         if (!Available) return;
         int selected = Math.Clamp(NextPercent + delta, 100, 200);
         if (selected == NextPercent) return;
+        // A changed percentage cannot silently change an already authorized target.
+        if (armed) Disarm("Target changed; arm again at menu");
         try
         {
-            // Changing the target invalidates any previously authorized request.
-            if (NextArmed)
-            {
-                armRequest.Cancel();
-                armRequestStatus = "Request cancelled because target changed";
-                Sample(armRequestStatus);
-            }
             nextPercent.Value = selected;
             ctx.Config.Save();
         }
-        catch (Exception ex) { ArmError(ex); }
-        Write();
-    }
-    internal void ToggleArm()
-    {
-        if (!Available) return;
-        try
+        catch (Exception ex)
         {
-            if (NextArmed)
-            {
-                armRequest.Cancel();
-                armRequestStatus = "Request cancelled";
-            }
-            else if (NextPercent > 100)
-            {
-                // The selected percentage remains a normal preference. Authorization
-                // itself is an independent, verified request file, not a config bool.
-                ctx.Config.Save();
-                armRequest.Queue(NextPercent);
-                armRequestStatus = "Request saved and verified; restart once";
-            }
-            else return;
-            Sample(armRequestStatus);
-            ctx.Log.LogInfo("BMF native health arm: " + armRequestStatus);
+            errors++;
+            SetActivation("Could not save health preference");
+            ctx.Log.LogWarning("BMF health preference: " + ex.Message);
         }
-        catch (Exception ex) { ArmError(ex); }
         Write();
     }
-    private void ArmError(Exception ex)
+    internal void ArmCurrentLaunch(bool observedAP, bool activeAdventure)
     {
-        errors++;
-        armRequestStatus = "Arm request operation failed: " + ex.Message;
-        Sample(armRequestStatus);
-        ctx.Log.LogWarning("BMF native health arm: " + armRequestStatus);
+        if (!Available || faulted || writeHalted)
+        { RejectArm("Health trial unavailable"); return; }
+        if (!party.CanArm(NextPercent, observedAP, activeAdventure))
+        {
+            RejectArm(NextPercent == 100 ? "Select more than 100%" :
+                "Arm at main menu before gameplay");
+            return;
+        }
+        // No persisted switch or marker is involved. Authorization is in memory,
+        // explicit, and discarded on exit. The existing local-solo gate still
+        // applies to every native write, which is limited to four identities.
+        percent = NextPercent;
+        armed = true;
+        SetActivation($"Armed for this launch at {percent}%");
+        Write();
+    }
+    internal void RejectArm(string reason)
+    {
+        armRejections++;
+        SetActivation(reason);
+        Write();
+    }
+    internal void Disarm(string reason = "Disarmed")
+    {
+        armed = false;
+        SetActivation(reason);
+        Write();
+    }
+    private void SetActivation(string detail)
+    {
+        activationStatus = detail;
+        Sample(detail);
+        ctx.Log.LogInfo("BMF native health activation: " + detail);
     }
     internal void ClearScope()
     {
         if (party.EndScope())
-            Sample("Party trial scope ended; no further writes or restoration on departed objects. Discard test adventure.");
+        {
+            armed = false;
+            SetActivation("Party trial scope ended; no further writes or restoration on departed objects. Discard test adventure.");
+        }
         // The arm is never renewed by a scene change or teardown.
         dirty = true;
     }
@@ -103,26 +109,16 @@ internal sealed class HeroHealthRule
     {
         ctx = context;
         nextPercent = ctx.Config.Bind("HouseRules", "HeroMaxHealth050", 100,
-            "Experimental max health target 100/125/150/175/200%. Native maximum trial requires separate one-shot arm. Fresh disposable solo only.");
+            "Experimental max health target 100/125/150/175/200%. Native maximum trial requires explicit current-launch arm at the main menu. Fresh disposable solo only.");
         // Retire the old boolean. It is not an authorization in this build.
         var legacyArm = ctx.Config.Bind("HouseRules", "ArmNativeHealth054", false,
-            "Retired v0.5.4 setting; ignored. Arm using the v0.5.6 House rules menu.");
+            "Retired v0.5.4 setting; ignored. Arm using the v0.5.7 House rules menu.");
         legacyArm.Value = false;
         ctx.Config.Save();
         percent = NextPercent;
-        armRequest = new NativeHealthArmRequest(ctx.DataDirectory);
-        try
-        {
-            armed = armRequest.Consume(percent, out armRequestStatus);
-            Sample(armRequestStatus);
-            ctx.Log.LogInfo("BMF native health arm: " + armRequestStatus);
-        }
-        catch (Exception ex)
-        {
-            armed = false;
-            ArmError(ex);
-            faulted = true; // Fail closed; do not touch native health if claim failed.
-        }
+        // Never consume any previous launch's flag or saved marker.
+        armed = false;
+        SetActivation("Arm at main menu");
         try
         {
             if (!enumType.IsEnum || enumType.FullName != "Jade.GameModel.Stats+Type" || !Enum.IsDefined(enumType, "Health"))
@@ -200,7 +196,7 @@ internal sealed class HeroHealthRule
     }
     internal void Observe(object piece, bool allowWrite = true, string source = "AP")
     {
-        if (!ready || faulted || !armed || party.Ended) return;
+        if (!ready || faulted || party.Ended || (!armed && party.Entries.Count == 0)) return;
         try
         {
             if (usesHealth.Invoke(piece, null) is not true || isDowned.Invoke(piece, null) is not false) return;
@@ -244,7 +240,7 @@ internal sealed class HeroHealthRule
                 Sample($"hero#{existing.Id} observed source={source} retained={retained} | {Snapshot(facade, stat)}");
                 return;
             }
-            if (writeHalted || !allowWrite || percent == 100) return;
+            if (!armed || writeHalted || !allowWrite || percent == 100) return;
             int initial = I(getStat, facade), nativeMax = I(getMax, facade);
             if (!HealthBudget.CanNativeTrial(percent, initial, nativeMax, F(value, stat), F(max, stat), F(permanent, stat), F(raw, stat), ModifierCount(stat)))
             { skipped++; dirty = true; return; }
@@ -314,8 +310,8 @@ internal sealed class HeroHealthRule
             var lines = new List<string> { "BMF hero maximum health probe (bounded party native maximum trial)",
                 "Framework=" + Framework.Version, "GameVersion=" + ctx.GameVersion, "GameAssemblySHA256=" + ctx.GameAssemblySha256,
                 "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + Status,
-                $"ConfiguredPercent={percent} NextPercent={NextPercent} Armed={armed} NextArmed={NextArmed} ScopeEnded={party.Ended} WritesHalted={writeHalted} Attempts={party.Entries.Count} Applied={Applied} Observations={party.Entries.Sum(e => e.Observations)} VerifiedObservations={Verified} Lost={Lost} Skipped={skipped} MissingIdentity={missingIdentity} RejectedReservations={rejectedReservations} Errors={errors}",
-                "ArmRequest=" + armRequestStatus,
+                $"ConfiguredPercent={percent} NextPercent={NextPercent} Armed={armed} ScopeEnded={party.Ended} WritesHalted={writeHalted} Attempts={party.Entries.Count} Applied={Applied} Observations={party.Entries.Sum(e => e.Observations)} VerifiedObservations={Verified} Lost={Lost} Skipped={skipped} MissingIdentity={missingIdentity} RejectedReservations={rejectedReservations} ArmRejections={armRejections} Errors={errors}",
+                "Activation=" + activationStatus,
                 "Up to four unique character-sheet IDs and native health objects; IDs/pointers not logged. Native maximum may persist. Discard test adventure." };
             foreach (var e in party.Entries.OrderBy(e => e.Id))
                 lines.Add($"hero#{e.Id} applied={e.Applied} baseline={e.Baseline} target={e.Target} originalCurrent={e.OriginalCurrent} lastCurrent={e.LastCurrent} lastMax={e.LastMax} highestCurrent={e.HighestCurrent} observations={e.Observations} verified={e.Verified} lost={e.Lost} aboveBaseline={e.AboveBaseline} replacedStat={e.ReplacedStat} rolledBack={e.RolledBack} rollbackFailed={e.RollbackFailed}");

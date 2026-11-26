@@ -17,6 +17,10 @@ internal sealed class NativeHealthPartyTrial
     private readonly HashSet<IntPtr> keys = new();
     internal IReadOnlyCollection<Entry> Entries => entries.Values;
     internal bool Ended { get; private set; }
+    internal bool CanArm(int percent, bool observedAP, bool activeAdventure)
+        => HealthBudget.Normalize(percent) > 100 && !Ended && entries.Count == 0 &&
+           !observedAP && !activeAdventure;
+
     internal Entry Find(string sheetId) => entries.TryGetValue(sheetId, out var entry) ? entry : null;
 
     internal Entry Reserve(string sheetId, IntPtr key, int baseline, int target, int current)

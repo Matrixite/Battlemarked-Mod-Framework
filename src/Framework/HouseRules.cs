@@ -12,8 +12,29 @@ internal sealed class HouseRules : BattlemarkedModule
     public override string Name => "House rules (extra hero AP)";
     private ModuleContext ctx;
     private HeroHealthRule health;
-    internal static bool NextNativeHealthArm => running?.health?.NextArmed ?? false;
-    internal static void ToggleNativeHealthArm() => running?.health?.ToggleArm();
+    internal static bool NativeHealthArmed => running?.health?.Armed ?? false;
+    internal static void ToggleNativeHealthArm()
+    {
+        var r = running;
+        if (r?.health == null || Environment.CurrentManagedThreadId != r.mainThread) return;
+        if (r.health.Armed) { r.health.Disarm(); return; }
+        try
+        {
+            // The launcher normally has no captured model yet. Once any AP hook
+            // has run, or a captured model is in an adventure, new arms are denied.
+            bool observedAP = r.refillCalls != 0 || r.spendCalls != 0 ||
+                Interlocked.Read(ref r.otherThread) != 0;
+            var m = model;
+            bool activeAdventure = m != null && (r.Flag(r.inGame, m) || r.Flag(r.playing, m));
+            if (r.faulted) { r.health.RejectArm("House rules unavailable"); return; }
+            r.health.ArmCurrentLaunch(observedAP, activeAdventure);
+        }
+        catch (Exception ex)
+        {
+            r.health.RejectArm("Could not verify pre-game state");
+            r.ctx.Log.LogWarning("Health activation rejected: " + ex.Message);
+        }
+    }
     internal static int NextHealthPercent => running?.health?.NextPercent ?? 100;
     internal static bool CanConfigureHealth => running?.health?.Available ?? false;
     internal static string HealthStatus => running?.health?.Status ?? "Health rule unavailable";

@@ -91,7 +91,7 @@ internal sealed class ModMenu
                 {
                     GUI.Label(new Rect(x + 12, y + 92, width - 145, 24), "Hero maximum health (experimental, solo)");
                     if (GUI.Button(new Rect(x + width - 125, y + 90, 113, 26), "Back to AP")) healthPage = false;
-                    GUI.Label(new Rect(x + 12, y + 124, width - 24, 24), "Next launch: " + HouseRules.NextHealthPercent + "% max HP");
+                    GUI.Label(new Rect(x + 12, y + 124, width - 24, 24), "Selected: " + HouseRules.NextHealthPercent + "% max HP");
                     if (HouseRules.CanConfigureHealth)
                     {
                         if (GUI.Button(new Rect(x + 12, y + 154, 80, 27), "-25%")) HouseRules.ChangeHealthPercent(-25);
@@ -101,8 +101,8 @@ internal sealed class ModMenu
                     GUI.Label(new Rect(x + 12, y + 187, width - 24, 24), HouseRules.HealthStatus);
                     GUI.Label(new Rect(x + 12, y + 216, width - 24, 24), HouseRules.HealthCounts);
                     GUI.Label(new Rect(x + 12, y + 245, width - 24, 24), "10 base HP -> " + HealthBudget.Target(10, HouseRules.NextHealthPercent) + " max HP");
-                    if (height >= 320 && HouseRules.CanConfigureHealth && GUI.Button(new Rect(x + 12, y + 274, width - 24, 26), "Next launch request: " + (HouseRules.NextNativeHealthArm ? "SAVED" : "OFF"))) HouseRules.ToggleNativeHealthArm();
-                    if (height >= 345) GUI.Label(new Rect(x + 12, y + 302, width - 24, 24), "Up to four heroes; may persist. Fresh disposable solo. Restart once.");
+                    if (height >= 320 && HouseRules.CanConfigureHealth && GUI.Button(new Rect(x + 12, y + 274, width - 24, 26), HouseRules.NativeHealthArmed ? "Disarm health trial (current launch)" : "Arm health trial (current launch)")) HouseRules.ToggleNativeHealthArm();
+                    if (height >= 345) GUI.Label(new Rect(x + 12, y + 302, width - 24, 24), "Arm at main menu, then start fresh disposable solo. No restart.");
                     if (height >= 370) GUI.Label(new Rect(x + 12, y + 330, width - 24, 24), "See hero-health-probe.txt for before/after verification.");
                     return;
                 }
