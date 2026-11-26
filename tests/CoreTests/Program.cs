@@ -111,3 +111,42 @@ Check(!HealthBudget.CanNativeTrial(125,14,16,14,16,16,16,0), "native trial skips
 Check(!HealthBudget.CanNativeTrial(100,16,16,16,16,16,16,0), "native trial disabled");
 Check(!HealthBudget.CanNativeTrial(125,16,16,16,20,16,16,0), "getter mismatch rejected");
 Console.WriteLine("PASS: native health trial guards.");
+
+var armDir = Path.Combine(Path.GetTempPath(), "bmf-arm-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(armDir);
+try
+{
+    var request = new NativeHealthArmRequest(armDir);
+    Check(!request.Pending && !request.Consume(125, out _), "default is read-only");
+    bool invalidArm = false;
+    try { request.Queue(100); } catch (ArgumentOutOfRangeException) { invalidArm = true; }
+    Check(invalidArm && !request.Pending, "100 percent cannot queue a request");
+
+    request.Queue(125);
+    Check(request.Pending, "arming creates a pending request");
+    var nextLaunch = new NativeHealthArmRequest(armDir);
+    Check(nextLaunch.Pending && nextLaunch.Consume(125, out _), "request survives a new instance and activates once");
+    Check(!nextLaunch.Pending && !new NativeHealthArmRequest(armDir).Consume(125, out _), "claimed request cannot activate on another launch");
+
+    request.Queue(150);
+    Check(!new NativeHealthArmRequest(armDir).Consume(125, out _) && !request.Pending,
+        "mismatched saved target is rejected and consumed");
+    request.Queue(125);
+    request.Cancel();
+    Check(!request.Pending && !new NativeHealthArmRequest(armDir).Consume(125, out _), "cancel removes the pending request");
+
+    File.WriteAllText(Path.Combine(armDir, NativeHealthArmRequest.PendingFileName), "corrupt");
+    Check(!request.Consume(125, out _) && !request.Pending, "malformed request consumed without activating");
+
+    request.Queue(125);
+    var claimedPath = Path.Combine(armDir, NativeHealthArmRequest.ClaimedFileName);
+    File.Delete(claimedPath);
+    Directory.CreateDirectory(claimedPath);
+    bool failedClaim = false;
+    try { request.Consume(125, out _); } catch (IOException) { failedClaim = true; }
+    catch (UnauthorizedAccessException) { failedClaim = true; }
+    Check(failedClaim && request.Pending, "failed claim cannot activate a trial");
+    request.Cancel();
+}
+finally { Directory.Delete(armDir, true); }
+Console.WriteLine("PASS: one-shot native health arm request lifecycle.");

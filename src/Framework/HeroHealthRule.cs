@@ -9,7 +9,8 @@ internal sealed class HeroHealthRule
 {
     private readonly ModuleContext ctx;
     private readonly ConfigEntry<int> nextPercent;
-    private readonly ConfigEntry<bool> nextArm;
+    private readonly NativeHealthArmRequest armRequest;
+    private string armRequestStatus = "Not checked";
     private readonly int percent;
     private bool armed, consumed, ready, faulted, dirty = true;
     private MethodInfo usesHealth, isDowned, stats, getObject, getStat, getMax, value, max, permanent, raw, modifiers, setMax, setValue;
@@ -21,21 +22,61 @@ internal sealed class HeroHealthRule
     private DateTime lastWrite;
     private readonly List<string> samples = new();
     internal int NextPercent => HealthBudget.Normalize(nextPercent.Value);
-    internal bool NextArmed => nextArm.Value;
+    internal bool NextArmed => armRequest.Pending;
     internal bool Available => ready;
-    internal string Status => !ready ? "Native health metadata unavailable" : faulted ? "Health trial stopped; see report" : applied ? $"Native trial: {baseline} -> {target} HP" : armed && !consumed ? $"Armed: {percent}% (one hero)" : "Read-only; arm for next launch";
+    internal string Status => !ready ? "Native health metadata unavailable" : faulted ? "Health trial stopped; see report" : applied ? $"Native trial: {baseline} -> {target} HP" : armed && !consumed ? $"Armed: {percent}% (one hero)" : NextArmed ? "Request saved; restart once" : "Read-only; arm for next launch";
     internal string Counts => $"Verified: {verifiedObservations} | Lost: {lost} | Errors: {errors}";
     internal void ChangePercent(int delta)
     {
         if (!Available) return;
-        nextPercent.Value = Math.Clamp(NextPercent + delta, 100, 200);
-        if (NextPercent == 100) nextArm.Value = false;
-        ctx.Config.Save(); dirty = true;
+        int selected = Math.Clamp(NextPercent + delta, 100, 200);
+        if (selected == NextPercent) return;
+        try
+        {
+            // Changing the target invalidates any previously authorized request.
+            if (NextArmed)
+            {
+                armRequest.Cancel();
+                armRequestStatus = "Request cancelled because target changed";
+                Sample(armRequestStatus);
+            }
+            nextPercent.Value = selected;
+            ctx.Config.Save();
+        }
+        catch (Exception ex) { ArmError(ex); }
+        Write();
     }
     internal void ToggleArm()
     {
-        if (!Available || NextPercent == 100) return;
-        nextArm.Value = !nextArm.Value; ctx.Config.Save(); dirty = true;
+        if (!Available) return;
+        try
+        {
+            if (NextArmed)
+            {
+                armRequest.Cancel();
+                armRequestStatus = "Request cancelled";
+            }
+            else if (NextPercent > 100)
+            {
+                // The selected percentage remains a normal preference. Authorization
+                // itself is an independent, verified request file, not a config bool.
+                ctx.Config.Save();
+                armRequest.Queue(NextPercent);
+                armRequestStatus = "Request saved and verified; restart once";
+            }
+            else return;
+            Sample(armRequestStatus);
+            ctx.Log.LogInfo("BMF native health arm: " + armRequestStatus);
+        }
+        catch (Exception ex) { ArmError(ex); }
+        Write();
+    }
+    private void ArmError(Exception ex)
+    {
+        errors++;
+        armRequestStatus = "Arm request operation failed: " + ex.Message;
+        Sample(armRequestStatus);
+        ctx.Log.LogWarning("BMF native health arm: " + armRequestStatus);
     }
     internal void ClearScope()
     {
@@ -60,13 +101,25 @@ internal sealed class HeroHealthRule
         ctx = context;
         nextPercent = ctx.Config.Bind("HouseRules", "HeroMaxHealth050", 100,
             "Experimental max health target 100/125/150/175/200%. Native maximum trial requires separate one-shot arm. Fresh disposable solo only.");
-        nextArm = ctx.Config.Bind("HouseRules", "ArmNativeHealth054", false,
-            "One-shot native health maximum trial on the first eligible hero; consumed at startup. May persist in saves. Fresh disposable solo only.");
-        percent = NextPercent;
-        armed = nextArm.Value && percent > 100;
-        // Consume saved arm before any gameplay write; no auto-rearm on subsequent restarts.
-        nextArm.Value = false;
+        // Retire the old boolean. It is not an authorization in this build.
+        var legacyArm = ctx.Config.Bind("HouseRules", "ArmNativeHealth054", false,
+            "Retired v0.5.4 setting; ignored. Arm using the v0.5.5 House rules menu.");
+        legacyArm.Value = false;
         ctx.Config.Save();
+        percent = NextPercent;
+        armRequest = new NativeHealthArmRequest(ctx.DataDirectory);
+        try
+        {
+            armed = armRequest.Consume(percent, out armRequestStatus);
+            Sample(armRequestStatus);
+            ctx.Log.LogInfo("BMF native health arm: " + armRequestStatus);
+        }
+        catch (Exception ex)
+        {
+            armed = false;
+            ArmError(ex);
+            faulted = true; // Fail closed; do not touch native health if claim failed.
+        }
         try
         {
             if (!enumType.IsEnum || enumType.FullName != "Jade.GameModel.Stats+Type" || !Enum.IsDefined(enumType, "Health"))
@@ -209,6 +262,7 @@ internal sealed class HeroHealthRule
                 "Framework=" + Framework.Version, "GameVersion=" + ctx.GameVersion, "GameAssemblySHA256=" + ctx.GameAssemblySha256,
                 "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + Status,
                 $"ConfiguredPercent={percent} NextPercent={NextPercent} Armed={armed} NextArmed={NextArmed} Consumed={consumed} Applied={applied} Baseline={baseline} Target={target} OriginalCurrent={originalCurrent} Observations={observations} VerifiedObservations={verifiedObservations} Lost={lost} Skipped={skipped} RolledBack={rolledBack} RollbackFailed={rollbackFailed} Errors={errors}",
+                "ArmRequest=" + armRequestStatus,
                 "One native health stat object only; no raw pointers. Native maximum may persist. Discard test adventure." };
             lines.AddRange(samples);
             File.WriteAllLines(Path.Combine(ctx.DataDirectory, "hero-health-probe.txt"), lines);

@@ -1,6 +1,14 @@
-# Battlemarked Mod Framework (BMF) — v0.5.4-alpha
+# Battlemarked Mod Framework (BMF) — v0.5.5-alpha
 
-## New in v0.5.4 — one-shot native maximum health trial
+## New in v0.5.5 — verified one-shot health request
+
+The v0.5.4 logs showed a request queued (`NextArmed=True`) at the end of one session, but the subsequent game launch reported `Armed=False`, `Consumed=False` and no health write. The exact reason the old config boolean did not survive startup is unknown. No evidence yet confirms or rejects the native health setter. AP remains unchanged (12 refunds, four resets, zero errors in the latest session).
+
+This version retires `ArmNativeHealth054` and uses a separate, version-specific request file in the House rules module data folder. F10 > House rules > Hero health: select 125%, click **Next launch request** until **SAVED** appears, close the game completely, and relaunch once. The pending request is written and read back before SAVED is reported. Changing the selected percentage cancels a pending request. Clicking the button again cancels it. At startup the framework claims the pending file by moving it to `native-health-trial-055.claimed` before enabling any write, rejects an invalid or changed percentage, and logs the exact request outcome. The claimed file is an inert receipt, not an authorization for a subsequent launch. The button is OFF after claim by design; check the separate status **Armed: 125% (one hero)**. Do not click the button again during the test.
+
+**Fresh disposable local solo adventure only.** The native maximum may persist in saves; do not load a prior or valuable save. Move a full-health unmodified hero, take damage, heal above its previous max if possible, and complete a round. Only one native health stat object can be attempted per process; no auto-reapplication, no party-wide health changes, no restoration on teardown. Upload `hero-health-probe.txt`, `house-rules-probe.txt` and `LogOutput.log`. The health report includes `ArmRequest=`, `Armed=`, `Consumed=`, `Applied=` and later verification counts. If the request is not found on startup, share the startup line and whether the pending/claimed file exists in the same module data directory. To cancel a pending request when the game is closed, remove only `native-health-trial-055.pending`. Do not edit the old arm boolean.
+
+## New in v0.5.4 — one-shot native maximum health trial (historical)
 
 The v0.5.3 computed getter returned 20 while the native stats facade remained 16. The rule correctly stopped. AP remained operational (49 refunds, 23 resets, zero errors). Both previous experimental health paths (temporary modifier churn and computed getter detour) are disabled in this version; their source remains in Git history.
 
