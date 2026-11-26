@@ -20,6 +20,23 @@ internal sealed class FrameworkUpdater
     {
         internal string Folder, Source, Worker, Version, Sha;
     }
+    // Named method/delegate rather than a captured lambda. The IL2CPP
+    // reference set can expose an incomplete NullableAttribute; Roslyn's
+    // synthesized capturing lambda triggered CS0656 in the Windows build.
+    private sealed class StageRequest
+    {
+        private readonly FrameworkUpdater owner;
+        private readonly Offer offer;
+        internal StageRequest(FrameworkUpdater owner, Offer offer)
+        {
+            this.owner = owner;
+            this.offer = offer;
+        }
+        internal Task<Stage> Run()
+        {
+            return owner.DownloadStage(offer);
+        }
+    }
     private readonly string gameDir, updatesDir;
     private readonly ConfigFile config;
     private readonly ConfigEntry<bool> checkAutomatically, installAutomatically;
@@ -166,7 +183,8 @@ internal sealed class FrameworkUpdater
             var offer = available;
             Status = "Downloading and validating source; keep the game open";
             stageAutomatic = automatic;
-            stage = Task.Run(() => DownloadStage(offer));
+            var request = new StageRequest(this, offer);
+            stage = Task.Run<Stage>(new Func<Task<Stage>>(request.Run));
         }
         catch (Exception ex) { Error(ex); }
     }

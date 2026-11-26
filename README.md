@@ -1,4 +1,8 @@
-# Battlemarked Mod Framework (BMF) — v0.6.1-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.2-alpha
+
+## v0.6.2 — updater compiler compatibility
+
+The Windows v0.6.1 build reported CS0656 (missing `System.Runtime.CompilerServices.NullableAttribute..ctor`) specifically at the captured download lambda in FrameworkUpdater.cs. This patch replaces that inferred compiler-generated closure with a named, explicitly typed request/delegate, while retaining the same asynchronous staging, safety checks, updater worker and installer. It does not require editing the SDK, BepInEx or game assemblies. The working named-method update-check pattern is unchanged. Install v0.6.2 manually; v0.6.1 failed to build, so its updater cannot install this correction. Windows compilation remains to be verified.
 
 ## v0.6.1 — automatic GitHub updates
 

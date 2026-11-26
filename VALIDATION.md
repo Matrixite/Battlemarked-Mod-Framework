@@ -1,4 +1,8 @@
-# v0.6.1-alpha validation
+# v0.6.2-alpha validation
+
+## v0.6.2 build correction
+
+User v0.6.1 build: restore succeeded using installed SDKs 10.0.404 and 11.0.100; compilation failed at FrameworkUpdater.cs:169, CS0656, missing NullableAttribute constructor. The failing statement used a captured lambda to call DownloadStage. The fix uses an explicit named StageRequest with a readonly offer and an explicitly typed Func<Task<Stage>> delegate. No other updater logic, gameplay logic or installer code changes. The local source check confirms removal of the captured lambda; the exact Windows compiler/IL2CPP environment is not available here. Re-run Install-BMF.cmd on v0.6.2 and confirm compilation before claiming the fix works.
 
 ## Updater validation
 
