@@ -166,7 +166,7 @@ internal sealed class FrameworkUpdater
         if (Busy || Scheduled) return;
         available = null;
         nextCheck = DateTime.UtcNow.AddHours(6);
-        Status = "Checking GitHub...";
+        Status = "Checking for updates...";
         check = Task.Run(FindUpdate);
     }
 
@@ -305,7 +305,7 @@ internal sealed class FrameworkUpdater
                 var finished = check; check = null;
                 var offer = finished.GetAwaiter().GetResult();
                 available = UpdatePolicy.IsNewer(offer.Version, Framework.Version) ? offer : null;
-                Status = available != null ? "Update available: " + offer.Version : "You're up to date (repository: " + offer.Version + ")";
+                Status = available != null ? "Update available: " + offer.Version : "You're up to date (latest: " + offer.Version + ")";
                 if (AutoCheck && AutoInstall && available != null)
                 {
                     if (AlreadyAttempted(offer.Sha)) Status += " (manual retry available)";

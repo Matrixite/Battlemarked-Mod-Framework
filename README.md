@@ -1,4 +1,8 @@
-# Battlemarked Mod Framework (BMF) — v0.6.7-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.8-alpha
+
+## v0.6.8 — cleaner normal-player interface
+
+When Developer mode is OFF, the Reports tab and the three diagnostic module entries are hidden. Enable Developer mode from F10 > Mods to bring them back immediately. Other tabs remain accessible and the tab bar fills the available width in either mode. The Updates screen uses provider-neutral labels/status messages, while the existing update source, safety checks, installer and technical diagnostics are retained. For support exports, turn Developer mode ON first, then use F10 > Reports > Export support ZIP.
 
 ## v0.6.7 — developer-only module visibility
 

@@ -1,4 +1,8 @@
-# v0.6.7-alpha validation
+# v0.6.8-alpha validation
+
+## v0.6.8 player-facing tabs and update wording
+
+Source-level checks cover filtering tabs by developer mode, stable tab identities, full-width layout, and provider-neutral status/result display. Added CoreTests assertions for both modes and provider strings, including uppercase and provider hostnames. The .NET SDK is unavailable here; executable tests and Windows compilation are pending. In-game acceptance: toggle Developer mode repeatedly under Mods and confirm Reports appears/disappears immediately, Updates opens the correct page in both modes, and report export still works when enabled. Check for updates and confirm no provider name/repository appears in the update UI. Verify previous update status, automatic check/install toggles, and existing update workflow.
 
 ## v0.6.7 developer module visibility
 

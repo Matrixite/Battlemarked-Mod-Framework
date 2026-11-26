@@ -32,6 +32,20 @@ foreach (string id in new[] { "org.battlemarked.houserules", "org.example.custom
 }
 Console.WriteLine("PASS: developer-mode menu visibility.");
 
+// Reports is developer-only; Updates and all other tabs stay accessible.
+foreach (bool developerMode in new[] { false, true })
+{
+    foreach (string name in new[] { "Overview", "AP rules", "Health", "Presets", "Mods", "Updates" })
+        Check(MenuModuleVisibility.IsTabVisible(name, developerMode), "regular tab always visible: " + name);
+    Check(MenuModuleVisibility.IsTabVisible("Reports", developerMode) == developerMode, "reports follows developer mode");
+}
+Check(UpdatePolicy.ForDisplay("Checking for updates...", "Update status unavailable") == "Checking for updates...", "normal status preserved");
+Check(UpdatePolicy.ForDisplay("Update failed: GITHUB.com unavailable", "Update failed; see reports") == "Update failed; see reports", "provider in status hidden");
+Check(UpdatePolicy.ForDisplay("Update failed: raw.githubusercontent.com", "Update failed; see reports") == "Update failed; see reports", "provider host hidden");
+Check(UpdatePolicy.ForDisplay(UpdatePolicy.Repository, "See reports") == "See reports", "repository name hidden");
+Check(UpdatePolicy.ForDisplay("Installed v0.6.8 successfully.", "See reports") == "Installed v0.6.8 successfully.", "normal result preserved");
+Console.WriteLine("PASS: developer-only Reports tab and provider-neutral update display.");
+
 for (int cap = 2; cap <= 5; cap++)
 for (int bonus = 0; bonus <= 3; bonus++)
 foreach (bool adjust in new[] { false, true })

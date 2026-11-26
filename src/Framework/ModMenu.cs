@@ -32,7 +32,7 @@ internal sealed class ModMenu
     {
         this.plugin = plugin; this.log = log; this.config = config;
         enabled = config.Bind("Menu", "Enabled", true, "Enable experimental desktop mod manager.");
-        developerMode = config.Bind("Menu", "DeveloperMode", false, "Show built-in diagnostic and example modules in the Mods tab. Visibility only; module settings are unchanged.");
+        developerMode = config.Bind("Menu", "DeveloperMode", false, "Show built-in diagnostic and example modules and the Reports tab. Visibility only; module settings are unchanged.");
         open = config.Bind("Menu", "StartOpen", false, "Open menu automatically; fallback if F10 is unavailable.").Value;
         savedX = config.Bind("Menu", "PositionX", -1, "Last menu left position in pixels; -1 centers horizontally.");
         savedY = config.Bind("Menu", "PositionY", -1, "Last menu top position in pixels; -1 centers vertically.");
@@ -140,10 +140,18 @@ internal sealed class ModMenu
             GUI.Box(new Rect(x, y, width, height), "Battlemarked Mod Manager | BMF " + Framework.Version + " | Drag to move");
             if (GUI.Button(new Rect(x + width - 80, y + 24, 68, 26), "Close")) { SetOpen(false); return; }
             GUI.Label(new Rect(x + 12, y + 25, width - 100, 25), plugin.CompatibilityStatus + " | F10");
-            float tabWidth = (width - 24) / Tabs.Length;
+            // Keep the original tab IDs when Reports is hidden.
+            var visibleTabs = new List<int>();
             for (int i = 0; i < Tabs.Length; i++)
-                if (GUI.Button(new Rect(x + 12 + i * tabWidth, y + 58, tabWidth - 3, 28),
+                if (MenuModuleVisibility.IsTabVisible(Tabs[i], developerMode.Value)) visibleTabs.Add(i);
+            if (!visibleTabs.Contains(tab)) tab = 4; // Mods, where developer mode can be restored.
+            float tabWidth = (width - 24) / visibleTabs.Count;
+            for (int column = 0; column < visibleTabs.Count; column++)
+            {
+                int i = visibleTabs[column];
+                if (GUI.Button(new Rect(x + 12 + column * tabWidth, y + 58, tabWidth - 3, 28),
                     (tab == i ? "[" + Tabs[i] + "]" : Tabs[i]))) tab = i;
+            }
 
             void Label(float top, string value) => GUI.Label(new Rect(x + 15, y + top, width - 30, 25), value);
             bool Button(float top, string value) => GUI.Button(new Rect(x + 15, y + top, width - 30, 28), value);
@@ -160,7 +168,7 @@ internal sealed class ModMenu
                 Label(283, "Rules: disposable local solo only. Back up saves separately.");
                 Label(314, "Health: explicitly queue before each NEW campaign.");
                 Label(345, "AP bonus edits apply live; module switches require restart.");
-                Label(375, plugin.Updater?.Status ?? "Automatic updater unavailable");
+                Label(375, UpdatePolicy.ForDisplay(plugin.Updater?.Status ?? "Automatic updater unavailable", "Update status details: see development Reports."));
                 return;
             }
             if (tab == 1)
@@ -244,10 +252,10 @@ internal sealed class ModMenu
             if (tab == 6)
             {
                 var updater = plugin.Updater;
-                Label(97, "GitHub: " + UpdatePolicy.Repository);
+                Label(97, "Framework updates");
                 Label(124, "Installed: " + Framework.Version + " | Available: " + (updater?.AvailableVersion ?? "Unavailable"));
                 if (updater == null) { Label(154, "Updater unavailable; see BepInEx log."); return; }
-                Label(153, updater.Status);
+                Label(153, UpdatePolicy.ForDisplay(updater.Status, "Update status details: see development Reports."));
                 if (!updater.Busy && !updater.Scheduled && Button(181, "Check for updates now")) updater.CheckNow();
                 if (updater.CanInstall && Button(216, "Download and install when game closes")) updater.Install();
                 if (updater.Scheduled && Button(216, "Cancel scheduled update")) updater.CancelScheduled();
@@ -255,7 +263,7 @@ internal sealed class ModMenu
                 if (Button(286, "Automatic installation: " + (updater.AutoInstall ? "ON" : "OFF (opt-in)"))) updater.ToggleAutoInstall();
                 Label(318, "Source updates build locally; no DLL replacement while playing.");
                 Label(345, "Exit game after queueing; wait for installer before relaunch.");
-                Label(373, updater.LastResult);
+                Label(373, UpdatePolicy.ForDisplay(updater.LastResult, "Previous update details: see development Reports."));
                 return;
             }
 
@@ -288,7 +296,7 @@ internal sealed class ModMenu
                     developerMode.Value = !developerMode.Value;
                     page = 0;
                     config.Save();
-                    message = developerMode.Value ? "Development modules visible." : "Development modules hidden.";
+                    message = developerMode.Value ? "Development modules and Reports visible." : "Development modules and Reports hidden.";
                 }
                 catch (Exception ex)
                 {

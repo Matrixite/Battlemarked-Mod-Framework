@@ -9,6 +9,13 @@ internal static class UpdatePolicy
     internal const string Repository = "Matrixite/Battlemarked-Mod-Framework";
     internal const string ManifestName = "bmf-update.json";
     internal const string RefUrl = "https://api.github.com/repos/" + Repository + "/git/ref/heads/main";
+    // Keep provider-specific technical details in diagnostics, not the player UI.
+    internal static string ForDisplay(string value, string fallback) =>
+        string.IsNullOrEmpty(value) ||
+        value.IndexOf("github", StringComparison.OrdinalIgnoreCase) >= 0 ||
+        value.IndexOf(Repository, StringComparison.OrdinalIgnoreCase) >= 0
+            ? fallback : value;
+
     internal static bool ValidCommit(string sha) => sha != null && Regex.IsMatch(sha, @"\A[0-9a-f]{40}\z");
     internal static bool ValidVersion(string version) => version != null &&
         Regex.IsMatch(version, @"\A(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})\z") &&
