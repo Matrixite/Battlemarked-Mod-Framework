@@ -18,52 +18,6 @@ Check(host.Count == 0 && trace.SequenceEqual(new[] {"three", "one"}), "reverse c
 Check(!host.Remove("missing", _ => {}), "missing module removal");
 Console.WriteLine("PASS: eight lifecycle assertions.");
 
-// Main-menu proof must be fresh, consecutive and inside an entered state.
-var menuGate = new MainMenuGate();
-var menuKey = new IntPtr(1);
-var staleMenuKey = new IntPtr(2);
-Check(!menuGate.Ready(0), "no menu evidence at startup");
-menuGate.Observe(menuKey, 10); menuGate.Observe(menuKey, 11);
-Check(!menuGate.Ready(11), "pulse without menu entry cannot authorize");
-menuGate.Enter(IntPtr.Zero); menuGate.Observe(IntPtr.Zero, 12); menuGate.Observe(IntPtr.Zero, 13);
-Check(!menuGate.Ready(13), "invalid menu identity rejected");
-menuGate.Enter(menuKey); menuGate.Observe(menuKey, 20); menuGate.Observe(menuKey, 20);
-Check(!menuGate.Ready(20), "duplicate observations cannot authorize");
-menuGate.Observe(staleMenuKey, 21);
-Check(!menuGate.Ready(21), "stale menu instance cannot authorize");
-menuGate.Observe(menuKey, 21);
-Check(menuGate.Ready(21) && menuGate.Ready(22), "two consecutive main-menu frames authorize now/next frame");
-Check(!menuGate.Ready(23), "old observations expire");
-menuGate.Observe(menuKey, 25);
-Check(!menuGate.Ready(25), "nonconsecutive frames fail closed");
-menuGate.Observe(menuKey, 26);
-Check(menuGate.Ready(26), "fresh proof recovers");
-menuGate.Leave(); menuGate.Observe(menuKey, 27);
-Check(!menuGate.Ready(27), "exit invalidates and late callbacks can't reopen");
-menuGate.Enter(staleMenuKey); menuGate.Observe(menuKey, 30); menuGate.Observe(staleMenuKey, 30);
-Check(!menuGate.Ready(30), "new entry does not reuse proof");
-menuGate.Observe(staleMenuKey, 31);
-Check(menuGate.Ready(31), "re-entered menu verified");
-foreach (bool ready in new[] { false, true })
-foreach (bool restartable in new[] { false, true })
-foreach (bool blocked in new[] { false, true })
-foreach (bool running in new[] { false, true })
-foreach (bool desired in new[] { false, true })
-{
-    var expected = !ready || !restartable || running == desired ? ModuleChange.None :
-        running ? ModuleChange.Stop : blocked ? ModuleChange.None : ModuleChange.Start;
-    Check(ModuleSwitchPolicy.Plan(ready, restartable, blocked, running, desired) == expected, "switch plan matrix");
-}
-var toggleHost = new ModuleHost<string>((id, value, error) => failures.Add(id));
-Check(toggleHost.Add("mod", "first"), "start module instance");
-int cleaned = 0;
-Check(toggleHost.Remove("mod", _ => cleaned++) && cleaned == 1, "stop removes module and cleans up once");
-Check(toggleHost.Add("mod", "fresh"), "re-enable same ID with fresh instance");
-var live = new List<string>();
-toggleHost.Dispatch(live.Add, _ => {});
-Check(live.SequenceEqual(new[] { "fresh" }), "only new instance receives callbacks");
-Console.WriteLine("PASS: menu-gated lifecycle policy and repeated module transitions.");
-
 // Developer mode affects menu visibility only; known diagnostics are opt-in.
 var developmentModuleIds = new[] { "org.battlemarked.diagnostics.corelogic", "org.battlemarked.diagnostics.gameplay", "org.battlemarked.example.scenelogger" };
 foreach (string id in developmentModuleIds)

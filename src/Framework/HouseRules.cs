@@ -204,8 +204,6 @@ internal sealed class HouseRules : BattlemarkedModule
     private string status = "not started", scene = "unknown";
     private DateTime lastWrite;
     private readonly List<string> samples = new();
-    internal bool PreventsReactivation => faulted || (health?.PreventsReactivation ?? false) ||
-        writing != 0 || unresolved != 0 || heroes.Values.Any(h => h.PendingRestore);
     internal static string Status => running == null ? "Module not running" : running.status;
     internal static string Counts => running == null ? "No active module" : $"Grants: {running.grants} | Refunds: {running.refunds} | Errors: {running.errors}";
     private static MethodInfo Exact(Type type, string name, string signature)

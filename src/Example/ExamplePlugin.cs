@@ -5,14 +5,13 @@ using Battlemarked.ModFramework;
 
 namespace Battlemarked.Example;
 
-[BepInPlugin("org.battlemarked.example", "BMF Example: Scene Logger", "0.6.11")]
+[BepInPlugin("org.battlemarked.example", "BMF Example: Scene Logger", "0.6.12")]
 [BepInDependency(Framework.Guid, Framework.Version)]
 public sealed class ExamplePlugin : BasePlugin
 {
-    private static BattlemarkedModule CreateSceneLogger() => new SceneLogger();
     public override void Load()
     {
-        if (!Framework.RegisterFactory(CreateSceneLogger)) Log.LogWarning("BMF refused module registration.");
+        if (!Framework.Register(new SceneLogger())) Log.LogWarning("BMF refused module registration.");
     }
 }
 
