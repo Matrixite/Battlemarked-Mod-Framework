@@ -13,28 +13,17 @@ internal sealed class HouseRules : BattlemarkedModule
     public override string Name => "House rules (extra hero AP)";
     private ModuleContext ctx;
     private HeroHealthRule health;
-    internal static bool NativeHealthArmed => running?.health?.Armed ?? false;
+    internal static bool NativeHealthRequested => running?.health is { } h && (h.Armed || h.Queued);
     internal static void ToggleNativeHealthArm()
     {
         var r = running;
         if (r?.health == null || Environment.CurrentManagedThreadId != r.mainThread) return;
-        if (r.health.Armed) { r.health.Disarm(); return; }
-        try
-        {
-            // The launcher normally has no captured model yet. Once any AP hook
-            // has run, or a captured model is in an adventure, new arms are denied.
-            bool observedAP = r.refillCalls != 0 || r.spendCalls != 0 ||
-                Interlocked.Read(ref r.otherThread) != 0;
-            var m = model;
-            bool activeAdventure = m != null && (r.Flag(r.inGame, m) || r.Flag(r.playing, m));
-            if (r.faulted) { r.health.RejectArm("House rules unavailable"); return; }
-            r.health.ArmCurrentLaunch(observedAP, activeAdventure);
-        }
-        catch (Exception ex)
-        {
-            r.health.RejectArm("Could not verify pre-game state");
-            r.ctx.Log.LogWarning("Health activation rejected: " + ex.Message);
-        }
+        r.ConsumeUnverifiedHealthTransition();
+        if (r.health.Armed || r.health.Queued) { r.health.Disarm(); return; }
+        if (r.faulted || !r.healthStartBound)
+        { r.health.RejectArm("Fresh campaign detection unavailable"); return; }
+        // Queueing cannot change the current adventure, even after AP activity.
+        r.health.QueueForFreshCampaign();
     }
     internal static int NextHealthPercent => running?.health?.NextPercent ?? 100;
     internal static bool CanConfigureHealth => running?.health?.Available ?? false;
@@ -43,7 +32,10 @@ internal sealed class HouseRules : BattlemarkedModule
     internal static void ChangeHealthPercent(int delta) => running?.health?.ChangePercent(delta);
     private static HouseRules running;
     private static object model;
-    private PropertyInfo modelPointer;
+    private PropertyInfo modelPointer, healthRoomPointer;
+    private MethodInfo playingRoom;
+    private bool healthStartBound;
+    private int unverifiedHealthTransition;
     private MethodInfo hudModel, networkRoom, localPlayerCount, roomTryCast, roomPlayers, roomConnected, roomHost;
     private Type localRoomType;
     private bool modelFromHud;
@@ -280,6 +272,34 @@ internal sealed class HouseRules : BattlemarkedModule
                 roomHook = "bound";
             }
             catch (Exception ex) { roomTryCast = null; roomHook = "unavailable: " + ex.Message; ctx.Log.LogWarning("Optional local room proof: " + ex.Message); }
+            // The supplied interop report has separate native start and join
+            // entry points. Keep this independent of the working AP hooks.
+            try
+            {
+                if (health == null || !health.Available || roomTryCast == null)
+                    throw new InvalidOperationException("Health or native local room metadata unavailable");
+                var app = Assembly.Load(new AssemblyName("Jade.Application"));
+                var state = app.GetType("Jade.Application.AppStatePlaying", true);
+                var fresh = Exact(state, "StartNewCampaign", "200212814C11831908");
+                var existing = Exact(state, "JoinExistingCampaign", "200412814C122D1184541512837D0112351281C5");
+                playingRoom = Exact(state, "get_NetworkRoom", "20001281B1");
+                healthRoomPointer = localRoomType.GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance);
+                if (fresh.IsStatic || existing.IsStatic || playingRoom.IsStatic ||
+                    !fresh.GetParameters()[0].ParameterType.IsEnum || fresh.GetParameters()[1].ParameterType != typeof(int) ||
+                    playingRoom.ReturnType != networkRoom.ReturnType ||
+                    healthRoomPointer?.PropertyType != typeof(IntPtr) || !healthRoomPointer.CanRead)
+                    throw new InvalidOperationException("Unexpected fresh campaign or room metadata");
+                ctx.Patches.Patch(existing, prefix: Hook(nameof(BeforeExistingCampaign)));
+                ctx.Patches.Patch(fresh, postfix: Hook(nameof(AfterNewCampaign)));
+                healthStartBound = true;
+                health.SetFreshStartBinding("new and existing campaign hooks attached");
+            }
+            catch (Exception ex)
+            {
+                healthStartBound = false;
+                health?.SetFreshStartBinding("unavailable: " + ex.Message);
+                ctx.Log.LogWarning("Health fresh start detection: " + ex.Message);
+            }
             // Exact metadata from the supplied interop report. Capture a live model
             // from the in-game HUD at turn start if the selection model was missed.
             try
@@ -314,6 +334,81 @@ internal sealed class HouseRules : BattlemarkedModule
             ctx.Log.LogWarning(status);
         }
         Write();
+    }
+    private void ConsumeUnverifiedHealthTransition()
+    {
+        if (Interlocked.Exchange(ref unverifiedHealthTransition, 0) != 0)
+            health?.CancelForTransition("Campaign transition occurred off the main thread; queue again");
+    }
+    private static void BeforeExistingCampaign()
+    {
+        var r = running;
+        if (r == null || !r.healthStartBound) return;
+        if (Environment.CurrentManagedThreadId != r.mainThread)
+        { Interlocked.Exchange(ref r.unverifiedHealthTransition, 1); return; }
+        r.ConsumeUnverifiedHealthTransition();
+        r.health.ExistingCampaignStarted();
+    }
+    private static void AfterNewCampaign(object __instance, int __1)
+    {
+        var r = running;
+        if (r == null || !r.healthStartBound) return;
+        if (Environment.CurrentManagedThreadId != r.mainThread)
+        { Interlocked.Exchange(ref r.unverifiedHealthTransition, 1); return; }
+        r.ConsumeUnverifiedHealthTransition();
+        IntPtr key = IntPtr.Zero;
+        // Verify native room type by IL2CPP checked cast, never by constructing
+        // a wrapper from an arbitrary pointer. The game may still be loading;
+        // the full gameplay/hero/room checks run again before health writes.
+        if (r.health.Queued && __1 == 1)
+        {
+            try
+            {
+                key = r.HealthRoomIdentity(r.playingRoom.Invoke(__instance, null), false, out string detail);
+                if (key == IntPtr.Zero) r.health.RejectRoom("new campaign: " + detail);
+            }
+            catch (Exception ex) { r.health.RejectRoom("new room read failed: " + ex.GetType().Name); }
+        }
+        r.health.NewCampaignStarted(__1, key);
+    }
+    private IntPtr HealthRoomIdentity(object room, bool duringPlay, out string detail)
+    {
+        detail = "missing native local room";
+        if (room == null || roomTryCast == null || healthRoomPointer == null) return IntPtr.Zero;
+        var nativeLocal = roomTryCast.Invoke(room, null);
+        if (nativeLocal == null || !localRoomType.IsInstanceOfType(nativeLocal)) return IntPtr.Zero;
+        var key = (IntPtr)healthRoomPointer.GetValue(nativeLocal);
+        if (key == IntPtr.Zero) { detail = "zero room identity"; return IntPtr.Zero; }
+        if (duringPlay)
+        {
+            int? count = ReadCount(roomPlayers, nativeLocal), locals = ReadCount(localPlayerCount, model);
+            bool? ownsRoom = ReadFlag(roomHost, nativeLocal);
+            if (count != 1 || locals != 1 || ownsRoom != true)
+            {
+                detail = $"roomPlayers={count?.ToString() ?? "?"} localPlayers={locals?.ToString() ?? "?"} roomHost={ownsRoom?.ToString() ?? "?"}";
+                return IntPtr.Zero;
+            }
+        }
+        detail = "verified local room";
+        return key;
+    }
+    private void ObserveHealth(object piece, bool allowWrite)
+    {
+        ConsumeUnverifiedHealthTransition();
+        if (health == null || !health.Available || !health.NeedsRoom || !healthStartBound) return;
+        // Caller already verified local solo scope, including active/local hero.
+        // Independently require the same native local room as the new campaign.
+        checkingScope++;
+        try
+        {
+            var m = model;
+            if (m == null) { health.RejectRoom("no current model"); return; }
+            var key = HealthRoomIdentity(networkRoom.Invoke(m, null), true, out string detail);
+            if (key == IntPtr.Zero) { health.RejectRoom(detail); return; }
+            health.Observe(piece, key, allowWrite);
+        }
+        catch (Exception ex) { health.RejectRoom("room read failed: " + ex.GetType().Name); }
+        finally { checkingScope--; }
     }
     private IntPtr ModelKey(object candidate) => candidate == null ? IntPtr.Zero : (IntPtr)modelPointer.GetValue(candidate);
     private static void Capture(object __instance)
@@ -552,7 +647,7 @@ internal sealed class HouseRules : BattlemarkedModule
             if (r.health != null && r.health.Available)
             {
                 r.writing++;
-                try { r.health.Observe(piece, allowWrite: false); } finally { r.writing--; }
+                try { r.ObserveHealth(piece, allowWrite: false); } finally { r.writing--; }
             }
             var h = r.Identify(piece);
             if (!isSpend && h != null && h.PendingRestore && r.Remaining(piece) <= 2)
@@ -591,7 +686,7 @@ internal sealed class HouseRules : BattlemarkedModule
                 if (r.Scope(state.Piece) == "local solo hero")
                 {
                     r.writing++;
-                    try { r.health.Observe(state.Piece); } finally { r.writing--; }
+                    try { r.ObserveHealth(state.Piece, allowWrite: true); } finally { r.writing--; }
                 }
             }
             catch (Exception ex) { r.ctx.Log.LogWarning("Health observation skipped: " + ex.Message); }
@@ -780,6 +875,7 @@ internal sealed class HouseRules : BattlemarkedModule
     public override void OnSceneChanged(SceneInfo info) => SyncScene(info.Handle, info.Name);
     public override void OnUpdate()
     {
+        ConsumeUnverifiedHealthTransition();
         if (requestedRefundMode != refundMode && (DateTime.UtcNow - lastModeCheck).TotalSeconds >= 1)
             TryApplyModeChange();
         if (dirty && (DateTime.UtcNow - lastWrite).TotalSeconds >= 5) Write();
@@ -804,5 +900,5 @@ internal sealed class HouseRules : BattlemarkedModule
         }
         catch (Exception ex) { ctx.Log.LogWarning("House rules report: " + ex.Message); }
     }
-    public override void OnStop() { LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); health?.Write(); }
+    public override void OnStop() { health?.CancelForTransition("Module stopped"); LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); health?.Write(); }
 }

@@ -1,4 +1,14 @@
-# Battlemarked Mod Framework (BMF) — v0.5.10-alpha
+# Battlemarked Mod Framework (BMF) — v0.5.11-alpha
+
+## New in v0.5.11 — queue hero health for a fresh campaign
+
+The v0.5.10 runtime report verified 18 AP refunds across four tracked hero AP objects, six budget resets and zero framework errors. All four used five paid one-AP actions in the first round. The HUD model provided true solo/local/in-game/playing/host flags and false multiplayer; the alternative room proof was not needed. Eleven non-character-sheet callbacks were skipped. Health did not run: eight arm rejections, zero attempts. The old lifetime AP activity guard prevents arming once any AP callback has occurred, even if the user is returning to the menu; the exact timing of the eight clicks is unknown.
+
+The health button now queues an explicit in-memory request for the **next new solo game**. It can be clicked at the main menu or during gameplay; clicking it does not change the active game. Exact metadata in the supplied interop report identifies Jade.Application.AppStatePlaying.StartNewCampaign (200212814C11831908), JoinExistingCampaign (200412814C122D1184541512837D0112351281C5) and get_NetworkRoom (20001281B1). The queue can be claimed only on the new-campaign callback with one local player and a nonzero checked native LocalNetworkRoom identity. Joining an existing game, an off-main-thread transition, or an invalid start cancels the request. Before any health write, the original verified build/local solo/host/active local hero checks must pass, the native room must still match the fresh claim, and its player count, local player count and host status must be verified. A different verified room cancels the claim. If required metadata or runtime verification fails, health remains read-only; AP is independent.
+
+The selected percentage persists as before; authorization is **not** persisted. Disarming or changing the target cancels queued or armed writes. There is still at most one attempted party trial per process, up to four unique sheet/stat identities, with the same full baseline, max-only write, verification and rollback protections. Once gameplay is observed, departure ends that authorization; after any write attempt the trial cannot be rearmed in the same process. This avoids stacking native max changes, which can persist in saves. The AP algorithms and controls are unchanged.
+
+**Test:** launch v0.5.11, set health to 125%, click **Queue health for next new solo game**. Confirm the status is Queued. Start a completely new disposable local solo game, without restarting or loading a save. Play paid actions on all heroes, try healing above original max HP, and send the AP/health probes plus LogOutput.log before restarting. Check the health probe for Fresh start binding, NewCampaigns, ExistingCampaigns, Claims, RoomRejections, Armed, Attempts, Applied and per-hero retention. The new hook/room timing and party-wide writes are not yet runtime verified. Discard the test adventure.
 
 ## New in v0.5.10 — verify first-adventure local solo scope
 

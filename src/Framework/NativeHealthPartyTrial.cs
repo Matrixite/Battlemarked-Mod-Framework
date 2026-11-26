@@ -17,9 +17,8 @@ internal sealed class NativeHealthPartyTrial
     private readonly HashSet<IntPtr> keys = new();
     internal IReadOnlyCollection<Entry> Entries => entries.Values;
     internal bool Ended { get; private set; }
-    internal bool CanArm(int percent, bool observedAP, bool activeAdventure)
-        => HealthBudget.Normalize(percent) > 100 && !Ended && entries.Count == 0 &&
-           !observedAP && !activeAdventure;
+    internal bool CanQueue(int percent)
+        => HealthBudget.Normalize(percent) > 100 && !Ended && entries.Count == 0;
 
     internal Entry Find(string sheetId) => entries.TryGetValue(sheetId, out var entry) ? entry : null;
 
@@ -42,5 +41,54 @@ internal sealed class NativeHealthPartyTrial
         if (Ended || entries.Count == 0) return false;
         Ended = true;
         return true;
+    }
+}
+
+// Authorization is in memory and bound to one native room only. A queued
+// preference explicitly does not authorize the adventure already in progress.
+internal sealed class FreshHealthAuthorization
+{
+    private IntPtr room;
+    internal bool Queued { get; private set; }
+    internal bool Armed { get; private set; }
+    internal bool Observed { get; private set; }
+    internal bool HasRoom => room != IntPtr.Zero;
+    internal void Queue()
+    {
+        Cancel();
+        Queued = true;
+    }
+
+    internal bool ClaimFreshStart(int localPlayers, IntPtr verifiedLocalRoom)
+    {
+        bool requested = Queued;
+        Cancel();
+        if (!requested || localPlayers != 1 || verifiedLocalRoom == IntPtr.Zero) return false;
+        room = verifiedLocalRoom;
+        Armed = true;
+        return true;
+    }
+
+    internal bool MatchesRoom(IntPtr liveRoom) => HasRoom && liveRoom == room;
+    internal bool Allows(IntPtr liveRoom) => Armed && MatchesRoom(liveRoom);
+    internal bool MarkObserved(IntPtr liveRoom)
+    {
+        if (!MatchesRoom(liveRoom)) return false;
+        Observed = true;
+        return true;
+    }
+
+    internal void DisableWrites()
+    {
+        Queued = false;
+        Armed = false;
+        // Preserve only read-only observation of an already observed room.
+        if (!Observed) Cancel();
+    }
+
+    internal void Cancel()
+    {
+        room = IntPtr.Zero;
+        Queued = Armed = Observed = false;
     }
 }
