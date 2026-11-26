@@ -208,3 +208,27 @@ Check(SessionModelGuard.MatchesTeardown(new IntPtr(1), new IntPtr(1)), "current 
 Check(!SessionModelGuard.MatchesTeardown(new IntPtr(1), new IntPtr(2)), "departed model cannot clear a replacement capture");
 Check(!SessionModelGuard.MatchesTeardown(IntPtr.Zero, IntPtr.Zero), "unknown identity is not a match");
 Console.WriteLine("PASS: session model lifecycle guards.");
+
+Check(SessionModelGuard.PreferExistingHud(true, 12, 12, false, new IntPtr(1), new IntPtr(2)), "unrelated getter cannot overwrite current HUD");
+Check(!SessionModelGuard.PreferExistingHud(true, 12, 13, false, new IntPtr(1), new IntPtr(2)), "new scene permits capture");
+Check(!SessionModelGuard.PreferExistingHud(true, 12, 12, true, new IntPtr(1), new IntPtr(2)), "new HUD capture can replace previous HUD");
+Check(!SessionModelGuard.PreferExistingHud(true, 12, 12, false, new IntPtr(1), new IntPtr(1)), "same model wrapper can refresh");
+Check(SessionModelGuard.SessionRejection(true, true, false, true, true, true, false) == null, "ordinary verified solo remains eligible");
+Check(SessionModelGuard.SessionRejection(false, true, false, true, true, true, true) == null, "false UI solo flag can be corroborated by an independently verified solo local room");
+Check(SessionModelGuard.SessionRejection(false, true, false, true, true, true, false) != null, "false solo without room proof rejected");
+Check(SessionModelGuard.SessionRejection(null, true, false, true, true, true, true) != null, "unknown solo flag rejected");
+Check(SessionModelGuard.SessionRejection(false, true, true, true, true, true, true) != null, "explicit multiplayer always rejected");
+Check(SessionModelGuard.SessionRejection(true, false, false, true, true, true, true) != null, "nonlocal game rejected");
+Check(SessionModelGuard.SessionRejection(false, true, null, true, true, true, true) != null, "unknown multiplayer rejected");
+Check(SessionModelGuard.SessionRejection(false, true, false, false, true, true, true) != null, "not in game rejected");
+Check(SessionModelGuard.SessionRejection(false, true, false, true, null, true, true) != null, "unknown level state rejected");
+Check(SessionModelGuard.SessionRejection(false, true, false, true, true, false, true) != null, "nonhost rejected");
+Check(SessionModelGuard.LocalRoomProof(true, true, true, true, 1, 1), "HUD and native local one-player room with connected host corroborate solo");
+Check(!SessionModelGuard.LocalRoomProof(false, true, true, true, 1, 1), "generic getter cannot authorize alternative solo proof");
+Check(!SessionModelGuard.LocalRoomProof(true, false, true, true, 1, 1), "not a native local room rejected");
+Check(!SessionModelGuard.LocalRoomProof(true, true, null, true, 1, 1), "unknown connection rejected");
+Check(!SessionModelGuard.LocalRoomProof(true, true, true, false, 1, 1), "nonhost room rejected");
+Check(!SessionModelGuard.LocalRoomProof(true, true, true, true, 2, 1), "multiple room players rejected");
+Check(!SessionModelGuard.LocalRoomProof(true, true, true, true, 1, 2), "multiple local players rejected");
+Check(!SessionModelGuard.LocalRoomProof(true, true, true, true, null, 1), "unknown room player count rejected");
+Console.WriteLine("PASS: HUD priority and independent solo room guards.");

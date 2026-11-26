@@ -44,7 +44,11 @@ internal sealed class HouseRules : BattlemarkedModule
     private static HouseRules running;
     private static object model;
     private PropertyInfo modelPointer;
-    private MethodInfo hudModel;
+    private MethodInfo hudModel, networkRoom, localPlayerCount, roomTryCast, roomPlayers, roomConnected, roomHost;
+    private Type localRoomType;
+    private bool modelFromHud;
+    private int ignoredGetterCaptures;
+    private string roomHook = "not attempted", lastFlags = "not observed", lastRejectedFlags = "not observed";
     private IntPtr modelKey, scopeModelKey;
     private int? sceneHandle, capturedSceneHandle;
     private int checkingScope, modelCaptures, hudCaptures, retainedCaptures, ignoredTeardowns, captureErrors;
@@ -250,6 +254,32 @@ internal sealed class HouseRules : BattlemarkedModule
                 try { ctx.Patches.Patch(method, postfix: Hook(nameof(Capture))); }
                 catch (Exception ex) { ctx.Log.LogWarning("Optional model capture " + method.Name + ": " + ex.Message); }
             }
+            // Independent room proof is optional; a missing binding preserves the
+            // original strict solo flag requirement. Never instantiate a native wrapper
+            // from a pointer or trust a managed type name as proof of native room type.
+            try
+            {
+                networkRoom = Exact(hero, "get_NetworkRoom", "2000128191");
+                localPlayerCount = Exact(hero, "get_LocalPlayerCount", "200008");
+                var roomInterface = networkRoom.ReturnType;
+                if (roomInterface.FullName != "Jade.Networking.INetworkRoom" ||
+                    localPlayerCount.ReturnType != typeof(int))
+                    throw new InvalidOperationException("Unexpected room or player count type");
+                localRoomType = roomInterface.Assembly.GetType("Jade.Networking.LocalNetworkRoom", true);
+                roomPlayers = Exact(localRoomType, "get_NumPlayers", "200008");
+                roomConnected = Exact(localRoomType, "IsConnected", "200002");
+                roomHost = Exact(localRoomType, "IsHost", "200002");
+                if (roomPlayers.ReturnType != typeof(int) || roomConnected.ReturnType != typeof(bool) || roomHost.ReturnType != typeof(bool))
+                    throw new InvalidOperationException("Unexpected local room proof types");
+                var casts = roomInterface.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(m => m.Name == "TryCast" && m.IsGenericMethodDefinition && m.GetGenericArguments().Length == 1 &&
+                        m.GetParameters().Length == 0 && m.ReturnType == m.GetGenericArguments()[0] &&
+                        m.DeclaringType?.FullName == "Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase").ToArray();
+                if (casts.Length != 1) throw new InvalidOperationException("Native checked cast unavailable");
+                roomTryCast = casts[0].MakeGenericMethod(localRoomType);
+                roomHook = "bound";
+            }
+            catch (Exception ex) { roomTryCast = null; roomHook = "unavailable: " + ex.Message; ctx.Log.LogWarning("Optional local room proof: " + ex.Message); }
             // Exact metadata from the supplied interop report. Capture a live model
             // from the in-game HUD at turn start if the selection model was missed.
             try
@@ -260,7 +290,13 @@ internal sealed class HouseRules : BattlemarkedModule
                 if (hudModel.ReturnType != hero || hudModel.IsStatic || turnStart.IsStatic)
                     throw new InvalidOperationException("Unexpected HUD model signature");
                 ctx.Patches.Patch(turnStart, postfix: Hook(nameof(CaptureFromHud)));
-                hudHook = "attached";
+                hudHook = "turn start attached";
+                try
+                {
+                    ctx.Patches.Patch(hudModel, postfix: Hook(nameof(CaptureHudGetter)));
+                    hudHook = "turn start and HUD getter attached";
+                }
+                catch (Exception ex) { ctx.Log.LogWarning("Optional HUD getter capture: " + ex.Message); }
             }
             catch (Exception ex) { hudHook = "unavailable: " + ex.Message; ctx.Log.LogWarning("Optional HUD capture: " + ex.Message); }
             ctx.Patches.Patch(teardown, prefix: Hook(nameof(ClearModel)), postfix: Hook(nameof(ClearModel)));
@@ -290,8 +326,16 @@ internal sealed class HouseRules : BattlemarkedModule
     {
         var r = running;
         if (r == null || Environment.CurrentManagedThreadId != r.mainThread || r.checkingScope != 0) return;
+        r.checkingScope++;
         try { r.CaptureModel(r.hudModel.Invoke(__instance, null), true); }
         catch (Exception ex) { r.CaptureError(ex); }
+        finally { r.checkingScope--; }
+    }
+    private static void CaptureHudGetter(object __result)
+    {
+        var r = running;
+        if (r != null && Environment.CurrentManagedThreadId == r.mainThread && r.checkingScope == 0)
+            r.CaptureModel(__result, true);
     }
     private void CaptureModel(object candidate, bool fromHud)
     {
@@ -301,10 +345,25 @@ internal sealed class HouseRules : BattlemarkedModule
             IntPtr key = ModelKey(candidate);
             if (key == IntPtr.Zero) return;
             int handle = SceneManager.GetActiveScene().handle;
-            model = candidate; modelKey = key; capturedSceneHandle = handle;
             modelCaptures++;
             if (fromHud) hudCaptures++;
             dirty = true;
+            if (SessionModelGuard.PreferExistingHud(modelFromHud || (scopeModelKey != IntPtr.Zero && scopeModelKey == modelKey), capturedSceneHandle, handle, fromHud, modelKey, key))
+            {
+                ignoredGetterCaptures++;
+                return;
+            }
+            // Keep the HUD or already verified scope preferred over unrelated UI models.
+            // A getter on the same native object may refresh its wrapper without
+            // losing HUD provenance. A new scene or identity must earn it again.
+            bool sameCapture = key == modelKey && capturedSceneHandle == handle;
+            if (scopeModelKey != IntPtr.Zero && scopeModelKey != key)
+            {
+                LoseScope("session model replaced");
+                scopeModelKey = IntPtr.Zero;
+            }
+            modelFromHud = fromHud || (sameCapture && modelFromHud);
+            model = candidate; modelKey = key; capturedSceneHandle = handle;
         }
         catch (Exception ex) { CaptureError(ex); }
     }
@@ -315,7 +374,7 @@ internal sealed class HouseRules : BattlemarkedModule
     }
     private void ClearCandidate()
     {
-        model = null; modelKey = IntPtr.Zero; capturedSceneHandle = null;
+        model = null; modelKey = IntPtr.Zero; capturedSceneHandle = null; modelFromHud = false;
     }
     private static void ClearModel(object __instance)
     {
@@ -351,6 +410,7 @@ internal sealed class HouseRules : BattlemarkedModule
         // scene change. Retain only a capture tagged with the actual new scene.
         bool retain = model != null && SessionModelGuard.RetainCapture(capturedSceneHandle, handle);
         LoseScope("scene changed");
+        scopeModelKey = IntPtr.Zero;
         if (retain) retainedCaptures++; else ClearCandidate();
         sceneHandle = handle; scene = name; dirty = true;
     }
@@ -358,6 +418,7 @@ internal sealed class HouseRules : BattlemarkedModule
     {
         lastScope = reason; dirty = true;
         if (reason == "local solo hero") return;
+        lastRejectedFlags = lastFlags;
         scopeRejections.TryGetValue(reason, out int previous);
         scopeRejections[reason] = previous + 1;
     }
@@ -372,11 +433,40 @@ internal sealed class HouseRules : BattlemarkedModule
         dirty = true;
     }
     private bool Flag(MethodInfo method, object target, params object[] args) => method.Invoke(target, args) is bool b && b;
+    private static bool? ReadFlag(MethodInfo method, object target)
+    {
+        try { return method.Invoke(target, null) is bool b ? b : null; }
+        catch { return null; }
+    }
+    private static int? ReadCount(MethodInfo method, object target)
+    {
+        try { return method.Invoke(target, null) is int n ? n : null; }
+        catch { return null; }
+    }
+    private bool CheckLocalRoom(object m, out string proof)
+    {
+        proof = "not verified";
+        if (!modelFromHud) { proof = "not HUD"; return false; }
+        if (roomTryCast == null) { proof = "binding unavailable"; return false; }
+        try
+        {
+            var room = networkRoom.Invoke(m, null);
+            var nativeLocal = room == null ? null : roomTryCast.Invoke(room, null);
+            if (nativeLocal == null || !localRoomType.IsInstanceOfType(nativeLocal))
+            { proof = "not native local room"; return false; }
+            bool? connected = ReadFlag(roomConnected, nativeLocal), isHost = ReadFlag(roomHost, nativeLocal);
+            int? count = ReadCount(roomPlayers, nativeLocal), locals = ReadCount(localPlayerCount, m);
+            proof = $"local room connected={connected?.ToString() ?? "?"} host={isHost?.ToString() ?? "?"} roomPlayers={count?.ToString() ?? "?"} localPlayers={locals?.ToString() ?? "?"}";
+            return SessionModelGuard.LocalRoomProof(modelFromHud, true, connected, isHost, count, locals);
+        }
+        catch (Exception ex) { proof = "room read failed: " + ex.GetType().Name; return false; }
+    }
     private int Allowance(object piece) => (int)allowance.Invoke(piece, null);
     private int Remaining(object piece) => (int)remaining.Invoke(null, new[] { piece });
     private string Scope(object piece)
     {
         var m = model;
+        lastFlags = "source=" + (modelFromHud ? "HUD" : "getter") + "; not evaluated";
         if (m == null) return "no session model";
         try
         {
@@ -387,12 +477,15 @@ internal sealed class HouseRules : BattlemarkedModule
         checkingScope++;
         try
         {
-            if (!Flag(solo, m)) return "not single player";
-            if (!Flag(local, m)) return "not local game";
-            if (Flag(multi, m)) return "multiplayer";
-            if (!Flag(inGame, m)) return "not in game";
-            if (!Flag(playing, m)) return "not playing level";
-            if (!Flag(host, m)) return "local player not host";
+            bool? s = ReadFlag(solo, m), l = ReadFlag(local, m), mp = ReadFlag(multi, m);
+            bool? g = ReadFlag(inGame, m), p = ReadFlag(playing, m), h = ReadFlag(host, m);
+            string room = "not needed";
+            bool roomProof = false;
+            if (s == false && l == true && mp == false && g == true && p == true && h == true)
+                roomProof = CheckLocalRoom(m, out room);
+            lastFlags = $"source={(modelFromHud ? "HUD" : "getter")} solo={s?.ToString() ?? "?"} local={l?.ToString() ?? "?"} multi={mp?.ToString() ?? "?"} inGame={g?.ToString() ?? "?"} playing={p?.ToString() ?? "?"} host={h?.ToString() ?? "?"} room={room} roomProof={roomProof}";
+            string rejection = SessionModelGuard.SessionRejection(s, l, mp, g, p, h, roomProof);
+            if (rejection != null) return rejection;
             var id = sheet.Invoke(piece, null);
             if (id == null) return "missing character sheet";
             if (!Flag(activeHero, m, id)) return "not active hero";
@@ -480,6 +573,7 @@ internal sealed class HouseRules : BattlemarkedModule
         {
             if (state.ModelKey != r.modelKey || state.SceneHandle != SceneManager.GetActiveScene().handle)
             {
+                r.lastFlags = "not evaluated: model or scene changed during AP operation";
                 r.RecordScope("model or scene changed during AP operation");
                 r.skipped++;
                 return false;
@@ -699,6 +793,10 @@ internal sealed class HouseRules : BattlemarkedModule
             var lines = new List<string> { "BMF AP bonus probe (live settings; no new bonuses when bonus=0)", "Framework=" + Framework.Version, "GameVersion=" + ctx.GameVersion, "GameAssemblySHA256=" + ctx.GameAssemblySha256, "Scene=" + scene, "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + status, $"ConfiguredBonus={bonus} NextBonus={nextBonus?.Value ?? 0} RefundMode={refundMode} NextRefundMode={requestedRefundMode} ModePending={requestedRefundMode != refundMode} Refunds={refunds} RefundResets={refundResets} PartialRefundResets={partialRefundResets} PartialRefills={partialRefills} RefundElevatedSkipped={refundElevatedSkipped} Grants={grants} OpeningGrants={openingGrants} AdjustExisting={adjustExisting} NextAdjustExisting={nextAdjustExisting?.Value ?? false} AdjustedCaps={adjustedCaps} ElevatedSkipped={elevatedSkipped} Restores={restores} Pending={heroes.Values.Count(h => h.PendingRestore)} Unresolved={unresolved} DuplicateRefills={duplicateRefills} NestedSkipped={nestedSkipped}", $"Refills={refillCalls} Spends={spendCalls} Samples={samplesTaken} Skipped={skipped} Errors={errors} OtherThread={Interlocked.Read(ref otherThread)}", "Current scope anonymous native AP stat objects (not necessarily distinct heroes):" };
             lines.Add($"SessionCapture: ModelCaptures={modelCaptures} HudCaptures={hudCaptures} RetainedCaptures={retainedCaptures} IgnoredTeardowns={ignoredTeardowns} CaptureErrors={captureErrors} LastScope={lastScope}");
             lines.Add("HUD capture hook: " + hudHook);
+            lines.Add($"HUD priority: selected={modelFromHud} ignoredGetterCaptures={ignoredGetterCaptures}");
+            lines.Add("Local room proof binding: " + roomHook);
+            lines.Add("Latest session flags: " + lastFlags);
+            lines.Add("Last rejected session flags: " + lastRejectedFlags);
             foreach (var reason in scopeRejections.OrderBy(x => x.Key)) lines.Add($"Scope rejected: {reason.Key} count={reason.Value}");
             foreach (var h in heroes.Values) lines.Add($"stat#{h.Id} grants={h.Grants} restores={h.Restores} spent={h.Spent} bonusCycles={h.BonusCycles} refunds={h.Refunds} refundBudgetUsed={h.RefundsThisCycle} refundCycleCap={h.RefundCycleCap} pending={h.PendingRestore}");
             lines.Add("Samples (max 250; no player identifiers or raw pointers):");

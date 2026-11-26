@@ -1,4 +1,16 @@
-# Battlemarked Mod Framework (BMF) — v0.5.9-alpha
+# Battlemarked Mod Framework (BMF) — v0.5.10-alpha
+
+## New in v0.5.10 — verify first-adventure local solo scope
+
+The v0.5.9 report showed +3 AP, refund mode enabled, two spend callbacks but no samples/refunds, 165 model capture observations (not unique model instances), two HUD captures and two scope rejections because IsSinglePlayer was false. The health trial was not armed. The reports confirm the AP settings were loaded, not that any of the other session flags were true.
+
+Prefer the current-scene HUD model or already verified model over unrelated getter captures; capture from the HUD model getter as well as turn start. A new scene, matching teardown, or new HUD identity can replace the selection. A changed selected model ends the old tracked scope rather than transferring refund budgets between sessions.
+
+The supplied metadata exposes HeroSelectModel.get_NetworkRoom (2000128191), get_LocalPlayerCount (200008), and LocalNetworkRoom.get_NumPlayers (200008), IsHost (200002), IsConnected (200002). If the UI single-player flag is explicitly false, the framework can accept independent solo proof **only** from the current HUD model with a successful IL2CPP checked cast to LocalNetworkRoom, one room player, one local player, connected/host room, and all other UI flags (local, not multiplayer, in game, playing, host). Unknown or explicit multiplayer remains blocked; the exact fingerprint and active/local hero checks remain required. If reflection binding or room verification fails, the fallback is unavailable. No game flag is modified.
+
+The report records HUD preference/ignored getter captures, optional checked-room binding, all six UI flags and the last rejected flags, plus the room proof when evaluated. Settings and AP/health algorithms are unchanged. The new path is not runtime-verified.
+
+Test: install v0.5.10, at the main menu enable +3 AP/refund mode, set health percentage and explicitly arm current launch if testing health. Start a new disposable local solo adventure and use paid actions; do not restart. Include the house-rules and hero-health probes and LogOutput.log before restarting. For AP, look for Refunds > 0 or Grants > 0 with local solo hero scope, and for health, Armed/Applied. Discard test adventure.
 
 ## New in v0.5.9 — new-adventure session capture
 
