@@ -18,6 +18,9 @@ internal sealed class ModMenu
     private readonly Plugin plugin;
     private readonly ManualLogSource log;
     private readonly ConfigEntry<bool> enabled;
+    private readonly ConfigFile config;
+    private readonly ConfigEntry<int> savedX, savedY;
+    private readonly MenuPosition position;
     private bool open, broken, guiSeen, usingPolling;
     private int page;
     private int tab;
@@ -27,9 +30,12 @@ internal sealed class ModMenu
     private bool inputChecked;
     internal ModMenu(Plugin plugin, ConfigFile config, ManualLogSource log)
     {
-        this.plugin = plugin; this.log = log;
+        this.plugin = plugin; this.log = log; this.config = config;
         enabled = config.Bind("Menu", "Enabled", true, "Enable experimental desktop mod manager.");
         open = config.Bind("Menu", "StartOpen", false, "Open menu automatically; fallback if F10 is unavailable.").Value;
+        savedX = config.Bind("Menu", "PositionX", -1, "Last menu left position in pixels; -1 centers horizontally.");
+        savedY = config.Bind("Menu", "PositionY", -1, "Last menu top position in pixels; -1 centers vertically.");
+        position = new MenuPosition(savedX.Value, savedY.Value);
     }
     private void ResolveInput()
     {
@@ -57,12 +63,59 @@ internal sealed class ModMenu
         }
         catch { }
     }
+    private void FinishDrag()
+    {
+        if (!position.End()) return;
+        try
+        {
+            // Save once when the mouse is released, never on every drag event.
+            savedX.Value = position.SavedX;
+            savedY.Value = position.SavedY;
+            config.Save();
+        }
+        catch (Exception ex) { log.LogWarning("BMF menu position could not be saved: " + ex.Message); }
+    }
+    private void SetOpen(bool value)
+    {
+        if (!value) FinishDrag();
+        open = value;
+    }
+    private void HandleDrag(Event e, float x, float y, float width, float height)
+    {
+        if (e == null) return;
+        // Use the title strip only; the Close button, tabs and rule controls
+        // keep their existing events. Mouse release outside the title is valid.
+        if (e.type == EventType.MouseDown)
+        {
+            FinishDrag(); // recover if a mouse release occurred outside the game
+            var mouse = e.mousePosition;
+            if (e.button == 0 && mouse.x >= x && mouse.x < x + width &&
+                mouse.y >= y && mouse.y < y + 24f)
+            {
+                position.Begin(mouse.x, mouse.y, x, y);
+                e.Use();
+            }
+        }
+        else if (position.Dragging && e.type == EventType.MouseDrag && e.button == 0)
+        {
+            var mouse = e.mousePosition;
+            position.Move(mouse.x, mouse.y, Screen.width, Screen.height, width, height);
+            e.Use();
+        }
+        else if (position.Dragging && e.type == EventType.MouseUp && e.button == 0)
+        {
+            var mouse = e.mousePosition;
+            position.Move(mouse.x, mouse.y, Screen.width, Screen.height, width, height);
+            FinishDrag();
+            e.Use();
+        }
+    }
     internal void Tick()
     {
         if (!enabled.Value || broken) return;
         if (!inputChecked) { inputChecked = true; ResolveInput(); }
         if (poll == null) return;
-        try { usingPolling = true; if (poll()) open = !open; }
+        try { usingPolling = true; if (poll()) SetOpen(!open); }
         catch (Exception ex) { poll = null; usingPolling = false; log.LogWarning("BMF hotkey polling unavailable; using GUI keyboard events: " + ex.Message); }
     }
     internal void Draw()
@@ -74,14 +127,17 @@ internal sealed class ModMenu
             if (!usingPolling)
             {
                 var e = Event.current;
-                if (e != null && e.type == EventType.KeyDown && e.keyCode == KeyCode.F10) { open = !open; e.Use(); }
+                if (e != null && e.type == EventType.KeyDown && e.keyCode == KeyCode.F10) { SetOpen(!open); e.Use(); }
             }
             if (!open) return;
             float width = Math.Min(800f, Screen.width - 24f), height = Math.Min(530f, Screen.height - 24f);
-            if (width < 460f || height < 410f) return;
-            float x = (Screen.width - width) / 2f, y = (Screen.height - height) / 2f;
-            GUI.Box(new Rect(x, y, width, height), "Battlemarked Mod Manager | BMF " + Framework.Version);
-            if (GUI.Button(new Rect(x + width - 80, y + 24, 68, 26), "Close")) { open = false; return; }
+            if (width < 460f || height < 410f) { FinishDrag(); return; }
+            float x = position.X(Screen.width, width), y = position.Y(Screen.height, height);
+            HandleDrag(Event.current, x, y, width, height);
+            x = position.X(Screen.width, width);
+            y = position.Y(Screen.height, height);
+            GUI.Box(new Rect(x, y, width, height), "Battlemarked Mod Manager | BMF " + Framework.Version + " | Drag to move");
+            if (GUI.Button(new Rect(x + width - 80, y + 24, 68, 26), "Close")) { SetOpen(false); return; }
             GUI.Label(new Rect(x + 12, y + 25, width - 100, 25), plugin.CompatibilityStatus + " | F10");
             float tabWidth = (width - 24) / Tabs.Length;
             for (int i = 0; i < Tabs.Length; i++)

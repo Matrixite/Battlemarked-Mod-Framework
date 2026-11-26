@@ -363,3 +363,25 @@ Check(!UpdatePolicy.SafeEntry(archiveRoot + "/src/evil.dll ", archiveRoot), "amb
 Check(!UpdatePolicy.SafeEntry(archiveRoot + "/CON", archiveRoot), "Windows device refused");
 Check(!UpdatePolicy.SafeEntry("wrong-root/src/file", archiveRoot), "unknown archive root refused");
 Console.WriteLine("PASS: updater policy assertions.");
+
+// Window movement remains inside the current display and preserves the drag offset.
+var position = new MenuPosition(-1, -1);
+Check(position.X(1920, 800) == 560 && position.Y(1080, 530) == 275, "default menu centered");
+position.Begin(580, 285, 560, 275);
+position.Move(780, 435, 1920, 1080, 800, 530);
+Check(position.X(1920, 800) == 760 && position.Y(1080, 530) == 425, "drag preserves pointer offset");
+Check(position.End() && !position.Dragging && position.SavedX == 760 && position.SavedY == 425, "release persists position");
+Check(position.X(1000, 800) == 200 && position.Y(700, 530) == 170, "screen shrink clamps window");
+var reopenedPosition = new MenuPosition(position.SavedX, position.SavedY);
+Check(reopenedPosition.X(1920, 800) == 760 && reopenedPosition.Y(1080, 530) == 425, "saved position restored");
+reopenedPosition.Begin(780, 435, 760, 425);
+reopenedPosition.Move(-100, -100, 1920, 1080, 800, 530);
+Check(reopenedPosition.X(1920, 800) == 0 && reopenedPosition.Y(1080, 530) == 0, "left/top clamp");
+reopenedPosition.Move(4000, 4000, 1920, 1080, 800, 530);
+Check(reopenedPosition.X(1920, 800) == 1120 && reopenedPosition.Y(1080, 530) == 550, "right/bottom clamp");
+Check(reopenedPosition.End(), "moved position saved once");
+Check(!reopenedPosition.End(), "duplicate release ignored");
+var clicked = new MenuPosition(-1, -1);
+clicked.Begin(580, 285, 560, 275);
+Check(!clicked.End() && clicked.SavedX == -1 && clicked.SavedY == -1, "title click does not persist center");
+Console.WriteLine("PASS: menu position and drag assertions.");

@@ -1,4 +1,8 @@
-# Battlemarked Mod Framework (BMF) — v0.6.3-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.4-alpha
+
+## v0.6.4 — moveable mod manager
+
+Open F10 and hold the left mouse button on the title bar (marked "Drag to move"). Drag the entire manager to the desired location, then release. The position is saved in the Menu configuration and restored after reopening or restarting. The manager remains within the current screen bounds when the resolution changes. Set Menu PositionX and PositionY to -1 in the closed game's framework config to reset to center. Existing buttons, AP, health, presets and the updater are unchanged. Install using F10 > Updates; the user confirmed the v0.6.2 to v0.6.3 automatic update worked.
 
 ## v0.6.3 — automatic update test
 

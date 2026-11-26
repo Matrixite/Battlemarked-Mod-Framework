@@ -1,4 +1,10 @@
-# v0.6.3-alpha validation
+# v0.6.4-alpha validation
+
+## v0.6.4 window movement
+
+Added standalone position tests for first-open centering, pointer offset, bounded dragging on every edge, persistence, resolution changes and click-without-drag. The local environment has no .NET SDK; C# test execution and in-game IMGUI behavior are pending. User confirmed the previous automatic update from v0.6.2 to v0.6.3 worked.
+
+Windows acceptance: update via F10 > Updates, then drag only the title bar. Verify the whole manager moves with the pointer, cannot be dragged off-screen, and that buttons/tabs/F10 still work. Close and reopen F10, restart the game, and confirm the position is retained. Resize the game if possible; the manager should stay visible. AP/health and updater code remain unchanged.
 
 ## v0.6.3 end-to-end update test
 
