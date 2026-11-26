@@ -108,7 +108,7 @@ internal sealed class ModMenu
                 }
                 GUI.Label(new Rect(x + 12, y + 92, width - 145, 24), "Extra hero action points (solo)");
                 if (GUI.Button(new Rect(x + width - 125, y + 90, 113, 26), "Hero health")) healthPage = true;
-                GUI.Label(new Rect(x + 12, y + 124, width - 24, 24), "Next launch: +" + HouseRules.NextBonus + " AP" + (HouseRules.NextBonus == 0 ? " (off)" : ""));
+                GUI.Label(new Rect(x + 12, y + 124, width - 24, 24), "Active: +" + HouseRules.ActiveBonus + " AP" + (HouseRules.ActiveBonus == 0 ? " (off)" : ""));
                 if (HouseRules.CanConfigure)
                 {
                     if (GUI.Button(new Rect(x + 12, y + 154, 80, 27), "-1 AP")) HouseRules.ChangeBonus(-1);
@@ -117,11 +117,11 @@ internal sealed class ModMenu
                 if (GUI.Button(new Rect(x + 188, y + 154, 100, 27), "Disable")) HouseRules.ChangeBonus(-3);
                 GUI.Label(new Rect(x + 12, y + 187, width - 24, 24), HouseRules.Status);
                 GUI.Label(new Rect(x + 12, y + 216, width - 24, 24), HouseRules.Counts);
-                GUI.Label(new Rect(x + 12, y + 245, width - 24, 25), "Restart to apply. Target: " + (2 + HouseRules.NextBonus) + (HouseRules.NextRefundMode ? " one-AP actions (cap unchanged)." : " AP (normal hero)."));
-                if (height >= 335 && HouseRules.CanConfigure && GUI.Button(new Rect(x + 12, y + 274, width - 24, 27), "Adjust existing AP caps: " + (HouseRules.NextAdjustExisting ? "ON" : "OFF"))) HouseRules.ToggleAdjustExisting();
-                if (height >= 335) GUI.Label(new Rect(x + 12, y + 302, width - 24, 25), HouseRules.NextRefundMode ? "Refunds count AP already above 2; cap is unchanged." : "Existing cap adjustment: disposable test saves only.");
-                if (height >= 365 && HouseRules.CanConfigure && GUI.Button(new Rect(x + 12, y + 330, width - 24, 27), "AP refund mode: " + (HouseRules.NextRefundMode ? "ON" : "OFF"))) HouseRules.ToggleRefundMode();
-                if (height >= 390) GUI.Label(new Rect(x + 12, y + 360, width - 24, 24), "Disposable solo only. Restart to apply.");
+                GUI.Label(new Rect(x + 12, y + 245, width - 24, 25), "Target: " + (2 + HouseRules.ActiveBonus) + (HouseRules.ActiveRefundMode ? " one-AP actions (cap unchanged)." : " AP (normal hero)."));
+                if (height >= 335 && HouseRules.CanConfigure && GUI.Button(new Rect(x + 12, y + 274, width - 24, 27), "Adjust existing AP caps: " + (HouseRules.ActiveAdjustExisting ? "ON" : "OFF"))) HouseRules.ToggleAdjustExisting();
+                if (height >= 335) GUI.Label(new Rect(x + 12, y + 302, width - 24, 25), HouseRules.ActiveRefundMode ? "Refunds count AP already above 2; cap is unchanged." : "Existing cap adjustment: disposable test saves only.");
+                if (height >= 365 && HouseRules.CanConfigure && GUI.Button(new Rect(x + 12, y + 330, width - 24, 27), "AP refund mode: " + (HouseRules.ActiveRefundMode ? "ON" : "OFF") + (HouseRules.ModePending ? " (change queued)" : ""))) HouseRules.ToggleRefundMode();
+                if (height >= 390) GUI.Label(new Rect(x + 12, y + 360, width - 24, 24), HouseRules.ModePending ? "Mode queued: return to main menu before next adventure." : "Bonus applies live; mode changes between adventures.");
                 return;
             }
             if (diagnostics)

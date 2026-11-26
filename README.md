@@ -1,4 +1,12 @@
-# Battlemarked Mod Framework (BMF) — v0.5.7-alpha
+# Battlemarked Mod Framework (BMF) — v0.5.8-alpha
+
+## New in v0.5.8 — live AP settings, no restart
+
+The House rules AP menu now changes the active extra AP bonus (0–3) and existing-cap adjustment immediately, including during a verified local solo adventure. Settings are also saved for the next launch if the config write succeeds. The menu displays **Active** AP rather than Next launch. No direct stat write occurs when you click a setting; it takes effect on the next eligible AP event. Refunds already used in a cycle are not reset on settings changes. Disabling prevents new bonuses but does not undo actions already taken, or instantly lower an existing cap; previously pending restorations still run. Native same-cap refills continue resetting the refund ledger even while the bonus is disabled or existing-cap adjustment is off.
+
+Switching AP refund mode is immediate at an idle main menu before any tracked adventure, or after a verified idle scope/teardown with no tracked AP objects or in-progress writes. A change requested during an adventure is explicitly queued until the next safe idle scope, not until a game restart. Return to the main menu and wait for the queued indication to disappear before starting a new adventure. Clicking the queued mode button again cancels the request. Scene changes alone do not prove an ended adventure. This prevents switching algorithms mid-cycle or abandoning live cap restorations. The partial-refill policy remains a startup-only advanced config setting.
+
+**Test in a fresh disposable local solo adventure.** Enable refund mode and select +1 AP at the main menu; start the adventure without restarting. Change to +3 during play and use up the current cycle's remaining refund allowance; decrease/disable/re-enable during the same cycle and verify used refunds are not repeated. Complete a verified refill and check the new allowance. Request a mode switch mid-adventure, return to the main menu, confirm it takes effect, and upload the AP probe and log. The current-launch health arm and party trial are unchanged. Prior AP and health runtime observations apply to earlier versions; live settings require verification.
 
 ## New in v0.5.7 — no-restart health activation
 

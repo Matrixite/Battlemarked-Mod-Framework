@@ -3,6 +3,14 @@ namespace Battlemarked.ModFramework;
 // Pure guards shared by the runtime hook and standalone tests.
 internal static class ApRefundBudget
 {
+    internal static bool CanApplyMode(bool idleScope, int trackedObjects, bool inNativeWrite)
+        => idleScope && trackedObjects == 0 && !inNativeWrite;
+
+    // Cycle observations are independent of the current bonus or eligibility
+    // toggle, so disabling temporarily does not reset or freeze the ledger.
+    internal static bool CanObserveCycle(int cap, int remaining)
+        => cap >= 2 && cap <= 5 && remaining >= 0 && remaining <= cap;
+
     internal static bool EligibleCap(int cap, bool adjustExisting)
         => cap == 2 || (adjustExisting && cap >= 3 && cap <= 5);
 

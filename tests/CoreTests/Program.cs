@@ -181,3 +181,20 @@ Check(idle.Reserve("hero-A", new IntPtr(7), 16, 20, 16) != null, "first attempt 
 Check(!idle.CanArm(125, false, false), "an attempted hero prevents new authorization");
 Check(idle.EndScope() && !idle.CanArm(125, false, false), "ended scope cannot rearm");
 Console.WriteLine("PASS: current-launch health activation guards.");
+
+Check(ApRefundBudget.CanApplyMode(true, 0, false), "mode change applies at idle menu");
+Check(!ApRefundBudget.CanApplyMode(false, 0, false), "mode change withheld without known idle scope");
+Check(!ApRefundBudget.CanApplyMode(true, 1, false), "mode change withheld with live tracked AP state");
+Check(!ApRefundBudget.CanApplyMode(true, 0, true), "mode change withheld during native write");
+Check(ApRefundBudget.CanObserveCycle(3, 0), "cycle tracked even when elevated cap adjustment disabled");
+Check(!ApRefundBudget.CanObserveCycle(6, 0) && !ApRefundBudget.CanObserveCycle(3, 4), "invalid cycles not tracked");
+// A live change never gives a second allowance for refunds already granted in this cycle.
+int liveUsed = 1;
+Check(!ApRefundBudget.CanRefund(1, liveUsed, 2, false, true, 2, 1, 1, true), "decreasing bonus honours refunds already used");
+Check(!ApRefundBudget.CanRefund(0, liveUsed, 2, false, true, 2, 1, 1, true), "disable stops refunds");
+Check(ApRefundBudget.CanRefund(3, liveUsed, 2, false, true, 2, 1, 1, true), "increasing permits only remaining allowance");
+liveUsed = 3;
+Check(!ApRefundBudget.CanRefund(3, liveUsed, 2, false, true, 2, 1, 1, true), "re-enable cannot reset exhausted budget");
+Check(ApRefundBudget.CanReset(true, 0, 2, true, true), "verified refill remains a reset while disabled");
+Check(!ApRefundBudget.CanReset(true, 2, 2, true, true), "full-to-full duplicate never resets a live budget");
+Console.WriteLine("PASS: live AP settings and refund-cycle guards.");

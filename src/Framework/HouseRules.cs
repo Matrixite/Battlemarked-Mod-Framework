@@ -51,7 +51,9 @@ internal sealed class HouseRules : BattlemarkedModule
     private ConfigEntry<bool> nextAdjustExisting;
     private bool adjustExisting;
     private ConfigEntry<bool> nextRefundMode;
-    private bool refundMode;
+    private bool refundMode, requestedRefundMode;
+    private DateTime lastModeCheck;
+    private bool localScopeSeen, teardownSinceLocalScope;
     private int refunds, refundResets, refundElevatedSkipped, partialRefundResets;
     private bool partialRefills;
     private int adjustedCaps, elevatedSkipped;
@@ -65,27 +67,79 @@ internal sealed class HouseRules : BattlemarkedModule
     }
     // Key by native stat object, not managed wrapper; distinct native copies remain distinct.
     private readonly Dictionary<IntPtr, HeroState> heroes = new();
-    internal static int NextBonus => running == null || running.nextBonus == null ? 0 : Math.Clamp(running.nextBonus.Value, 0, 3);
-    internal static bool NextAdjustExisting => running?.nextAdjustExisting?.Value ?? false;
-    internal static bool NextRefundMode => running?.nextRefundMode?.Value ?? false;
+    internal static int ActiveBonus => running?.bonus ?? 0;
+    internal static bool ActiveAdjustExisting => running?.adjustExisting ?? false;
+    internal static bool ActiveRefundMode => running?.refundMode ?? false;
+    internal static bool ModePending => running != null && running.requestedRefundMode != running.refundMode;
     internal static void ToggleRefundMode()
     {
-        if (!CanConfigure || running.nextRefundMode == null) return;
-        running.nextRefundMode.Value = !running.nextRefundMode.Value;
-        running.ctx.Config.Save();
+        var r = running;
+        if (!CanConfigure || r.nextRefundMode == null || Environment.CurrentManagedThreadId != r.mainThread) return;
+        r.requestedRefundMode = !r.requestedRefundMode;
+        r.TryApplyModeChange();
+        r.SaveApPreference(() => r.nextRefundMode.Value = r.requestedRefundMode,
+            r.requestedRefundMode == r.refundMode ? "AP mode active" : "AP mode change queued until idle scope");
     }
     internal static void ToggleAdjustExisting()
     {
-        if (!CanConfigure || running.nextAdjustExisting == null) return;
-        running.nextAdjustExisting.Value = !running.nextAdjustExisting.Value;
-        running.ctx.Config.Save();
+        var r = running;
+        if (!CanConfigure || r.nextAdjustExisting == null || Environment.CurrentManagedThreadId != r.mainThread) return;
+        r.adjustExisting = !r.adjustExisting;
+        r.SaveApPreference(() => r.nextAdjustExisting.Value = r.adjustExisting,
+            "Live AP existing-cap adjustment=" + r.adjustExisting);
     }
     internal static bool CanConfigure => running != null && running.setStat != null && running.setMax != null && running.pointer != null && running.statPointer != null && !running.faulted;
     internal static void ChangeBonus(int delta)
     {
-        if (running == null || running.nextBonus == null || (!CanConfigure && delta != -3)) return;
-        running.nextBonus.Value = Math.Clamp(NextBonus + delta, 0, 3);
-        running.ctx.Config.Save();
+        var r = running;
+        if (r == null || r.nextBonus == null || Environment.CurrentManagedThreadId != r.mainThread || (!CanConfigure && delta != -3)) return;
+        r.bonus = CanConfigure ? Math.Clamp(r.bonus + delta, 0, 3) : 0;
+        // Do not clear hero state, reset refund usage, or write any game stat here.
+        // Disabling stops new grants; already outstanding cap restorations still run.
+        r.RefreshApStatus();
+        r.SaveApPreference(() => r.nextBonus.Value = r.bonus, "Live AP bonus=" + r.bonus);
+    }
+    private void SaveApPreference(Action update, string detail)
+    {
+        try { update(); ctx.Config.Save(); }
+        catch (Exception ex)
+        {
+            Sample("AP preference save failed; current-launch value retained");
+            ctx.Log.LogWarning("AP preference save: " + ex.Message);
+        }
+        Sample(detail);
+        ctx.Log.LogInfo(detail);
+        Write();
+    }
+    private void RefreshApStatus()
+    {
+        if (faulted) return;
+        status = bonus == 0 ? "AP disabled; no new bonuses" : refundMode ?
+            $"Experimental +{bonus} AP via capped refunds" : $"Experimental +{bonus} AP on refill or first paid action";
+        dirty = true;
+    }
+    private void TryApplyModeChange()
+    {
+        lastModeCheck = DateTime.UtcNow;
+        if (requestedRefundMode == refundMode || !CanConfigure || writing != 0 || heroes.Count != 0) return;
+        try
+        {
+            var m = model;
+            // A scene change alone is not proof that an adventure ended. With
+            // no captured model after gameplay, wait for an actual teardown.
+            bool idleScope = m != null ? !Flag(inGame, m) && !Flag(playing, m)
+                : !localScopeSeen || teardownSinceLocalScope;
+            if (!ApRefundBudget.CanApplyMode(idleScope, heroes.Count, writing != 0)) return;
+            refundMode = requestedRefundMode;
+            RefreshApStatus();
+            Sample("Live AP refund mode=" + refundMode);
+            ctx.Log.LogInfo("Live AP refund mode=" + refundMode);
+        }
+        catch (Exception ex)
+        {
+            // Leave the requested mode pending rather than switching with unknown state.
+            ctx.Log.LogWarning("AP mode change deferred: " + ex.Message);
+        }
     }
     private int mainThread, refillCalls, spendCalls, samplesTaken, skipped, errors;
     private long otherThread;
@@ -106,13 +160,13 @@ internal sealed class HouseRules : BattlemarkedModule
     public override void OnStart(ModuleContext context)
     {
         ctx = context; mainThread = Environment.CurrentManagedThreadId;
-        nextBonus = ctx.Config.Bind("HouseRules", "ExtraHeroAP044", 0, "Experimental repeated extra AP, 0-3. Restart to apply. Disposable local solo only.");
+        nextBonus = ctx.Config.Bind("HouseRules", "ExtraHeroAP044", 0, "Experimental repeated extra AP, 0-3. Applies live; refunds already granted are not reset. Disposable local solo only.");
         bonus = Math.Clamp(nextBonus.Value, 0, 3);
         nextAdjustExisting = ctx.Config.Bind("HouseRules", "AdjustExistingAP046", false,
-            "Disposable solo only: include consistent existing 3-5 AP caps with allowance 2 in the bonus calculation. Cap mode may overwrite legitimate modifiers; refund mode preserves the cap. Restart to apply.");
+            "Disposable solo only: include consistent existing 3-5 AP caps with allowance 2 in the bonus calculation. Cap mode may overwrite legitimate modifiers; refund mode preserves the cap. Applies live.");
         nextRefundMode = ctx.Config.Bind("HouseRules", "RefundMode047", false,
-            "Experimental alternative: refund single paid AP actions without changing max AP. Disposable solo adventures only. Restart to apply.");
-        refundMode = nextRefundMode.Value;
+            "Experimental alternative: refund single paid AP actions without changing max AP. Applies at idle scope; no restart. Disposable solo only.");
+        requestedRefundMode = refundMode = nextRefundMode.Value;
         adjustExisting = nextAdjustExisting.Value;
         if (!ctx.IsVerifiedBuild(CoreLogicProbe.VerifiedHash)) { status = "Skipped: unverified game fingerprint"; Write(); return; }
         try
@@ -184,7 +238,7 @@ internal sealed class HouseRules : BattlemarkedModule
             ctx.Patches.Patch(spend, prefix: Hook(nameof(BeforeSpend)), postfix: Hook(nameof(AfterSpend)));
             partialRefills = ctx.Config.Bind("HouseRules", "PartialAPRefills052", true,
                 "Reset refund budget on a verified same-cap partial-to-full native refill. Full-to-full remains guarded. Restart to apply.").Value;
-            status = bonus == 0 ? "Read-only AP stat tracing" : refundMode ? $"Experimental +{bonus} AP via capped refunds" : $"Experimental +{bonus} AP on refill or first paid action";
+            RefreshApStatus();
             ctx.Log.LogInfo("BMF house rules: " + status);
         }
         catch (Exception ex)
@@ -197,7 +251,16 @@ internal sealed class HouseRules : BattlemarkedModule
     }
     private static void Capture(object __instance)
     { var r = running; if (r != null && Environment.CurrentManagedThreadId == r.mainThread) model = __instance; }
-    private static void ClearModel() { var r = running; if (r != null && Environment.CurrentManagedThreadId == r.mainThread) { r.LoseScope("session teardown"); model = null; } }
+    private static void ClearModel()
+    {
+        var r = running;
+        if (r != null && Environment.CurrentManagedThreadId == r.mainThread)
+        {
+            r.LoseScope("session teardown");
+            r.teardownSinceLocalScope = true;
+            model = null;
+        }
+    }
     private void LoseScope(string reason)
     {
         health?.ClearScope();
@@ -264,6 +327,8 @@ internal sealed class HouseRules : BattlemarkedModule
         try
         {
             if (r.Scope(piece) != "local solo hero") { r.skipped++; return null; }
+            r.localScopeSeen = true;
+            r.teardownSinceLocalScope = false;
             // Health has its own fault handling and never changes the AP budget.
             if (r.health != null && r.health.Available)
             {
@@ -276,7 +341,7 @@ internal sealed class HouseRules : BattlemarkedModule
             int beforeRemaining = r.Remaining(piece);
             int beforeMax = r.StatMax(piece);
             return new TraceState { Owner = r, Piece = piece, Hero = h, Operation = operation, Before = r.Snapshot(piece), BeforeRemaining = beforeRemaining, BeforeMax = beforeMax,
-                VerifiedBefore = r.refundMode && r.bonus > 0 && ApRefundBudget.EligibleCap(beforeMax, r.adjustExisting) && beforeRemaining >= 0 && beforeRemaining <= beforeMax && r.ValuesMatch(piece, beforeRemaining, beforeMax) };
+                VerifiedBefore = r.refundMode && ApRefundBudget.CanObserveCycle(beforeMax, beforeRemaining) && r.ValuesMatch(piece, beforeRemaining, beforeMax) };
         }
         catch (Exception ex) { r.Fail("before " + operation, ex); return null; }
     }
@@ -312,7 +377,7 @@ internal sealed class HouseRules : BattlemarkedModule
         End(__state, "returned");
         if (__state == null) return;
         var r = __state.Owner;
-        if (r.faulted || r.bonus == 0 || __state.Hero == null) return;
+        if (r.faulted || __state.Hero == null) return;
         try
         {
             var h = __state.Hero;
@@ -330,6 +395,7 @@ internal sealed class HouseRules : BattlemarkedModule
                 }
                 return;
             }
+            if (r.bonus == 0) return;
             if (r.Remaining(__state.Piece) > __state.BeforeRemaining) h.SpentSinceGrant = 0;
             if (h.PendingRestore || (h.Grants > 0 && __state.BeforeRemaining >= 2)) { r.duplicateRefills++; return; }
             int cap = r.StatMax(__state.Piece);
@@ -487,13 +553,19 @@ internal sealed class HouseRules : BattlemarkedModule
     private void Fail(string stage, Exception ex)
     { faulted = true; errors++; status = "Tracing stopped: " + stage; Sample(status + " | " + ex.GetType().Name); ctx.Log.LogWarning(status + ": " + ex.Message); }
     public override void OnSceneChanged(SceneInfo info) { LoseScope("scene changed"); scene = info.Name; model = null; dirty = true; }
-    public override void OnUpdate() { if (dirty && (DateTime.UtcNow - lastWrite).TotalSeconds >= 5) Write(); health?.Tick(); }
+    public override void OnUpdate()
+    {
+        if (requestedRefundMode != refundMode && (DateTime.UtcNow - lastModeCheck).TotalSeconds >= 1)
+            TryApplyModeChange();
+        if (dirty && (DateTime.UtcNow - lastWrite).TotalSeconds >= 5) Write();
+        health?.Tick();
+    }
     private void Write()
     {
         if (ctx == null) return;
         try
         {
-            var lines = new List<string> { "BMF AP bonus probe (experimental; read-only when bonus=0)", "Framework=" + Framework.Version, "GameVersion=" + ctx.GameVersion, "GameAssemblySHA256=" + ctx.GameAssemblySha256, "Scene=" + scene, "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + status, $"ConfiguredBonus={bonus} NextBonus={nextBonus?.Value ?? 0} RefundMode={refundMode} NextRefundMode={nextRefundMode?.Value ?? false} Refunds={refunds} RefundResets={refundResets} PartialRefundResets={partialRefundResets} PartialRefills={partialRefills} RefundElevatedSkipped={refundElevatedSkipped} Grants={grants} OpeningGrants={openingGrants} AdjustExisting={adjustExisting} NextAdjustExisting={nextAdjustExisting?.Value ?? false} AdjustedCaps={adjustedCaps} ElevatedSkipped={elevatedSkipped} Restores={restores} Pending={heroes.Values.Count(h => h.PendingRestore)} Unresolved={unresolved} DuplicateRefills={duplicateRefills} NestedSkipped={nestedSkipped}", $"Refills={refillCalls} Spends={spendCalls} Samples={samplesTaken} Skipped={skipped} Errors={errors} OtherThread={Interlocked.Read(ref otherThread)}", "Current scope anonymous native AP stat objects (not necessarily distinct heroes):" };
+            var lines = new List<string> { "BMF AP bonus probe (live settings; no new bonuses when bonus=0)", "Framework=" + Framework.Version, "GameVersion=" + ctx.GameVersion, "GameAssemblySHA256=" + ctx.GameAssemblySha256, "Scene=" + scene, "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + status, $"ConfiguredBonus={bonus} NextBonus={nextBonus?.Value ?? 0} RefundMode={refundMode} NextRefundMode={requestedRefundMode} ModePending={requestedRefundMode != refundMode} Refunds={refunds} RefundResets={refundResets} PartialRefundResets={partialRefundResets} PartialRefills={partialRefills} RefundElevatedSkipped={refundElevatedSkipped} Grants={grants} OpeningGrants={openingGrants} AdjustExisting={adjustExisting} NextAdjustExisting={nextAdjustExisting?.Value ?? false} AdjustedCaps={adjustedCaps} ElevatedSkipped={elevatedSkipped} Restores={restores} Pending={heroes.Values.Count(h => h.PendingRestore)} Unresolved={unresolved} DuplicateRefills={duplicateRefills} NestedSkipped={nestedSkipped}", $"Refills={refillCalls} Spends={spendCalls} Samples={samplesTaken} Skipped={skipped} Errors={errors} OtherThread={Interlocked.Read(ref otherThread)}", "Current scope anonymous native AP stat objects (not necessarily distinct heroes):" };
             foreach (var h in heroes.Values) lines.Add($"stat#{h.Id} grants={h.Grants} restores={h.Restores} spent={h.Spent} bonusCycles={h.BonusCycles} refunds={h.Refunds} refundBudgetUsed={h.RefundsThisCycle} refundCycleCap={h.RefundCycleCap} pending={h.PendingRestore}");
             lines.Add("Samples (max 250; no player identifiers or raw pointers):");
             lines.AddRange(samples); File.WriteAllLines(Path.Combine(ctx.DataDirectory, "house-rules-probe.txt"), lines); dirty = false; lastWrite = DateTime.UtcNow;
