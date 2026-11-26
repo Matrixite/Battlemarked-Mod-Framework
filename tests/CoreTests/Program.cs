@@ -289,3 +289,52 @@ Check(!SessionModelGuard.LocalRoomProof(true, true, true, true, 2, 1), "multiple
 Check(!SessionModelGuard.LocalRoomProof(true, true, true, true, 1, 2), "multiple local players rejected");
 Check(!SessionModelGuard.LocalRoomProof(true, true, true, true, null, 1), "unknown room player count rejected");
 Console.WriteLine("PASS: HUD priority and independent solo room guards.");
+
+// v0.6: a sealed trial cannot be reused, but can be replaced at a verified fresh start.
+Check(party.CanQueueNext(125, false), "ended party permits a new fresh campaign");
+Check(!party.CanQueueNext(125, true), "bound room blocks second queue");
+Check(!party.CanQueueNext(100, false), "vanilla health cannot queue");
+var repeat = new FreshHealthAuthorization();
+repeat.Queue();
+Check(repeat.ClaimFreshStart(1, new IntPtr(501)), "first room claims explicit queue");
+Check(!party.CanQueueNext(125, repeat.HasRoom), "no requeue while room bound");
+repeat.Cancel();
+Check(party.CanQueueNext(125, repeat.HasRoom), "new queue after departure");
+repeat.Queue();
+Check(!repeat.Allows(new IntPtr(501)) && repeat.ClaimFreshStart(1, new IntPtr(502)), "only new claim authorizes second room");
+var nextParty = new NativeHealthPartyTrial();
+Check(party.Ended && nextParty.Reserve("hero-A", new IntPtr(501), 16, 20, 16) != null, "fresh party allows original baseline identity");
+Check(!nextParty.CanQueueNext(125, false) && !nextParty.CanReserveIdentity("hero-A", new IntPtr(502)), "attempted party cannot renew itself");
+var ledgerDir = Path.Combine(Path.GetTempPath(), "bmf-ledger-test-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(ledgerDir);
+try
+{
+    var path = Path.Combine(ledgerDir, "baseline.txt");
+    var ledger = new HealthSafetyLedger(path);
+    Check(ledger.Ready && ledger.TryAuthorize("hero-a", new IntPtr(1), 16, 16, 0, out _), "first baseline persisted");
+    Check(!ledger.TryAuthorize("hero-a", new IntPtr(2), 20, 20, 0, out _), "compounded hero refused");
+    Check(!ledger.TryAuthorize("hero-b", new IntPtr(1), 20, 20, 0, out _), "changed native identity refused");
+    Check(ledger.TryAuthorize("hero-a", new IntPtr(2), 16, 16, 0, out _), "same original hero can repeat in fresh room");
+    Check(ledger.TryAuthorize("hero-b", new IntPtr(4), 22, 25, 1, out _), "modified original baseline recorded");
+    Check(!ledger.TryAuthorize("hero-b", new IntPtr(5), 29, 32, 1, out _), "compounded additive baseline rejected");
+    Check(!ledger.TryAuthorize("hero-b", new IntPtr(6), 22, 25, 2, out _), "changed modifier count rejected");
+    Check(!File.ReadAllText(path).Contains("hero-a"), "raw identity not persisted");
+    var reopened = new HealthSafetyLedger(path);
+    Check(!reopened.TryAuthorize("hero-a", new IntPtr(3), 20, 20, 0, out _), "compounding blocked across launches");
+    Check(reopened.TryAuthorize("hero-a", new IntPtr(3), 16, 16, 0, out _), "original baseline accepted after restart");
+    File.Delete(path);
+    Check(!reopened.TryAuthorize("hero-a", new IntPtr(3), 16, 16, 0, out _) && !reopened.Ready, "missing known ledger fails closed");
+    File.WriteAllText(path, "bad header");
+    Check(!new HealthSafetyLedger(path).Ready, "corrupt ledger fails closed");
+}
+finally { Directory.Delete(ledgerDir, true); }
+Console.WriteLine("PASS: v0.6 fresh-campaign and persistent baseline assertions.");
+foreach (var preset in HouseRulePreset.All)
+{
+    Check(preset.Bonus >= 0 && preset.Bonus <= 3, "preset AP valid");
+    Check(HealthBudget.Normalize(preset.HealthPercent) == preset.HealthPercent, "preset health valid");
+    Check(preset.Refund, "presets prefer refunds");
+    Check(HouseRulePreset.Match(preset.Bonus, preset.HealthPercent, preset.Refund, preset.AdjustExisting) == preset.Name, "preset round trip");
+}
+Check(HouseRulePreset.Match(2, 175, false, false) == "Custom", "custom preset detection");
+Console.WriteLine("PASS: preset preference assertions.");

@@ -1,4 +1,26 @@
-# Battlemarked Mod Framework (BMF) — v0.5.13-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.0-alpha
+
+## v0.6.0 — Stability and quality of life
+
+This source alpha builds on the user's verified v0.5.13 session: 12 AP refunds, four resets, four native health increases (16→20, 25→32 with raw 22→29 and the original +3 modifier, 20→25, 16→20), all four healed to target, 46/46 retained observations, zero framework errors. **The new v0.6 code has not yet been compiled or played.**
+
+- **Repeatable health trials:** leave the current campaign, queue from F10 > Health, then start a new disposable solo campaign. A successful exact fresh-start callback with one verified local room opens a new bounded four-hero trial; loading an existing campaign never authorizes a write. The health preference persists; explicit authorization does not. Any fault or loss of verification still blocks further writes for the launch. Native setter, modifier preservation and AP refund math are unchanged.
+- **Baseline safety:** before a native health write the framework records the original raw/effective maximum and modifier count in `health-baselines-v060.txt` under the house-rule config directory. A known character-sheet identity (SHA-256 hash only) or same-process native stat pointer with changed baseline is rejected. Missing/corrupt/unwritable known journal data stops new health writes; never delete it to bypass the guard. A different identity, previously modified save from an older release, or deleted journal across launches cannot be proven unmodified. Use fresh disposable games, retain the journal and back up saves separately. This is not a universal save validator or an automatic repair tool.
+- **Manager:** F10 opens Overview, AP rules, Health, Presets, Mods and Reports. AP preferences still apply live; refund/cap mode switches still wait for verified idle scope. Module toggles are next-launch only.
+- **Presets:** Vanilla (+0 AP / 100% HP), Relaxed (+1 / 125%), Heroic (+2 / 150%), Tested party (+3 / 125%), Epic (+3 / 200%). All prefer AP refunds rather than cap overwrites; non-vanilla presets include existing consistent caps in the refund calculation. Selecting a preset changes preferences and cancels health authorization; queue separately. Vanilla does not undo previous native changes.
+- **Diagnostics:** the local `compatibility-report.txt` combines build/hash match, active/next-launch module states, scope flags, hook status, AP counts, health status, baseline ledger and prior-trial totals. It refreshes every 15 seconds when startup diagnostics are enabled or on demand in Reports. A verified fingerprint alone does not certify runtime hook behavior or save safety.
+
+### Install or update
+
+1. Back up your game saves independently, exit Battlemarked, and extract the entire source ZIP outside the game directory.
+2. Double-click `Check-BMF.cmd` for prerequisites and the game fingerprint. Steam libraries are detected automatically; enter the game directory if no unique installation is found. BepInEx 6 IL2CPP x64 (initialized once), .NET 8 SDK and .NET 6 targeting pack are still required.
+3. Double-click `Install-BMF.cmd`. It builds both projects before copying only the BMF DLLs; it snapshots the previous DLLs with checksums into `BepInEx/BMF-Backups/`. Existing settings, ledger, third-party mods and saves remain untouched. The script checks that the game is closed and attempts rollback if copying fails.
+4. If necessary, close the game and run `Restore-BMF.cmd` to restore the latest complete DLL snapshot after confirmation. It backs up the currently installed pair too. It cannot undo game-save changes. Do not delete older backups if you need them.
+5. Launch, press F10, and use fresh disposable solo adventures only. See VALIDATION.md for the two-campaign regression test.
+
+For custom paths, pass `-GameDir "D:\SteamLibrary\steamapps\common\Battlemarked"` to any of the three launchers. No automatic downloads or silent updates are performed.
+
+## Historical release notes (older versions)
 
 ## New in v0.5.13 — preserve verified additive permanent health modifiers
 
@@ -187,7 +209,7 @@ The local v0.2.0 build reported nine CS0656 errors involving NullableAttribute a
 - Built-in presentation diagnostics, based on the supplied interop scan, with exact raw metadata signature matching. Missing or ambiguous matches and patch exceptions are reported individually. Matching metadata is not proof of runtime compatibility.
 - Six observed handler entry points: turn start/end, card execution, piece damage, dice spawn and encounter dice resolution. No game state is written and no arguments or results are collected. These counts may include replay or duplicate events; dice spawn is not a dice result.
 - Modules can override `OnGameplaySignal(GameplaySignal signal)` to receive coalesced handler calls on the main thread. `Kind`, `CallsSinceLastUpdate`, and `TotalCalls` are available. No authoritative gameplay state is exposed yet.
-- Double-click `Install-BMF.cmd` after extracting the whole ZIP and closing the game. The launcher uses your known D: game location. It builds locally and installs only BMF and the example, backing up existing DLLs. Alternatively use the PowerShell steps below.
+- Double-click `Install-BMF.cmd` after extracting the whole ZIP and closing the game. The current launcher detects Steam libraries or asks for the game folder. It builds locally and installs only BMF and the example, backing up existing DLLs. Alternatively use the PowerShell steps below.
 - After a solo combat test and normal exit, share `BepInEx/config/BattlemarkedModFramework/org.battlemarked.diagnostics.gameplay/gameplay-probe.txt` and `BepInEx/LogOutput.log`. Check for private details first. If startup fails, remove the framework and example DLLs as documented below. To disable probes before another run, set `EnablePresentationHooks = false` in the module settings.cfg (if generated), or remove the framework and example DLLs. No game binaries are changed.
 
 ## Installation
@@ -206,7 +228,7 @@ The local v0.2.0 build reported nine CS0656 errors involving NullableAttribute a
 
 ### Uninstall
 
-Close the game and remove only `BepInEx/plugins/BattlemarkedModFramework/Battlemarked.ModFramework.dll` and `Battlemarked.Example.dll` if present, as well as any other plugins that require BMF. Backups are `.bak` files and do not load. To remove BepInEx itself, follow the loader's own uninstall guide; never delete original game files. Settings and reports may be kept or removed separately. Omitting `-IncludeExample` on a later build does not remove a previously installed example; delete its DLL or disable its module config manually.
+Close the game and remove only `BepInEx/plugins/BattlemarkedModFramework/Battlemarked.ModFramework.dll` and `Battlemarked.Example.dll` if present, as well as any other plugins that require BMF. Backups are `.bak` files and do not load. To remove BepInEx itself, follow the loader's own uninstall guide; never delete original game files. Settings and reports may be kept or removed separately. An existing example DLL is rebuilt with the framework during installation. Uninstall it separately if unwanted.
 
 ## Discover game-specific methods
 

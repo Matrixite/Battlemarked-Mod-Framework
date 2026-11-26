@@ -26,6 +26,10 @@ public sealed class Plugin : BasePlugin
     private readonly Dictionary<string, MenuModule> menuModules = new(StringComparer.Ordinal);
     internal IEnumerable<MenuModule> MenuModules => menuModules.Values.OrderBy(x => x.Id, StringComparer.Ordinal);
     internal bool IsRunning(string id) => host.Contains(id);
+    private DateTime lastCompatibilityReport;
+    internal bool VerifiedGame => string.Equals(hash, CoreLogicProbe.VerifiedHash, StringComparison.OrdinalIgnoreCase);
+    internal string CompatibilityStatus => VerifiedGame ? "Verified game fingerprint" :
+        string.IsNullOrEmpty(hash) ? "Game fingerprint unavailable" : "Unverified game build";
     internal string GameVersion => gameVersion;
     internal string SceneName => lastScene?.Name ?? "unknown";
     internal void DrawMenu() => menu?.Draw();
@@ -109,6 +113,8 @@ public sealed class Plugin : BasePlugin
             host.Dispatch(e => e.Module.OnCoreSignal(signal), Stop);
         host.Dispatch(e => e.Module.OnUpdate(), Stop);
         menu?.Tick();
+        if (diagnostics.Value && (DateTime.UtcNow - lastCompatibilityReport).TotalSeconds >= 15)
+            RefreshCompatibilityReport();
     }
 
     private void Start(string id, BattlemarkedModule module)
@@ -144,6 +150,31 @@ public sealed class Plugin : BasePlugin
         try { entry.Context.Patches.UnpatchSelf(); }
         catch (Exception ex) { Log.LogError($"Unpatch: {ex}"); }
         finally { BepInEx.Logging.Logger.Sources.Remove(entry.Context.Log); }
+    }
+
+    internal bool RefreshCompatibilityReport()
+    {
+        lastCompatibilityReport = DateTime.UtcNow;
+        try
+        {
+            var lines = new List<string> {
+                $"Framework={Framework.Version}", $"GameVersion={gameVersion}", $"GameAssemblySHA256={hash}",
+                "Compatibility=" + CompatibilityStatus, "Scene=" + SceneName,
+                "UTC=" + DateTime.UtcNow.ToString("O"),
+                "Save safety: Native health trials only in explicitly queued fresh disposable local solo campaigns.",
+                "AP changes are local solo only; cap mode may persist changes. Prefer refunds.",
+                "No automated save editing, backup or repair. Back up saves separately before experimenting.",
+                "Unknown builds and unknown native identities are ineligible for house-rule writes.",
+                "Previously modified saves (including pre-v0.6) are not proven clean by the baseline ledger.",
+                "Modules:"
+            };
+            lines.AddRange(MenuModules.Select(m => $"{m.Id}: running={IsRunning(m.Id)} nextLaunch={m.Enabled.Value}"));
+            lines.AddRange(HouseRules.CompatibilityLines());
+            lines.AddRange(CoreLogicProbe.Summary());
+            File.WriteAllLines(Path.Combine(dataDir, "compatibility-report.txt"), lines);
+            return true;
+        }
+        catch (Exception ex) { Log.LogWarning("Compatibility report: " + ex.Message); return false; }
     }
 
     private void WriteReport()

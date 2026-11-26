@@ -12,7 +12,7 @@ internal sealed class MenuModule
     internal MenuModule(string id, string name, ConfigEntry<bool> enabled) { Id = id; Name = name; Enabled = enabled; }
 }
 
-// Desktop IMGUI. Changes are saved for the next launch, not applied mid-session.
+// Desktop IMGUI: live rule preferences, explicit health queue, next-launch module changes.
 internal sealed class ModMenu
 {
     private readonly Plugin plugin;
@@ -20,7 +20,8 @@ internal sealed class ModMenu
     private readonly ConfigEntry<bool> enabled;
     private bool open, broken, guiSeen, usingPolling;
     private int page;
-    private bool diagnostics, houseRules, healthPage;
+    private int tab;
+    private static readonly string[] Tabs = { "Overview", "AP rules", "Health", "Presets", "Mods", "Reports" };
     private string message = "Settings apply on next launch.";
     private Func<bool> poll;
     private bool inputChecked;
@@ -76,82 +77,124 @@ internal sealed class ModMenu
                 if (e != null && e.type == EventType.KeyDown && e.keyCode == KeyCode.F10) { open = !open; e.Use(); }
             }
             if (!open) return;
-            float width = Math.Min(650f, Screen.width - 24f), height = Math.Min(430f, Screen.height - 24f);
-            if (width < 300f || height < 250f) return;
+            float width = Math.Min(800f, Screen.width - 24f), height = Math.Min(530f, Screen.height - 24f);
+            if (width < 460f || height < 410f) return;
             float x = (Screen.width - width) / 2f, y = (Screen.height - height) / 2f;
             GUI.Box(new Rect(x, y, width, height), "Battlemarked Mod Manager | BMF " + Framework.Version);
-            if (GUI.Button(new Rect(x + width - 80, y + 24, 68, 25), "Close")) { open = false; return; }
-            GUI.Label(new Rect(x + 12, y + 27, width - 105, 25), "Game: " + plugin.GameVersion + " | F10");
-            if (GUI.Button(new Rect(x + 12, y + 58, 130, 26), "Installed mods")) { diagnostics = false; houseRules = false; }
-            if (GUI.Button(new Rect(x + 150, y + 58, 130, 26), "Diagnostics")) { diagnostics = true; houseRules = false; }
-            if (GUI.Button(new Rect(x + 288, y + 58, 130, 26), "House rules")) { diagnostics = false; houseRules = true; }
-            if (houseRules)
+            if (GUI.Button(new Rect(x + width - 80, y + 24, 68, 26), "Close")) { open = false; return; }
+            GUI.Label(new Rect(x + 12, y + 25, width - 100, 25), plugin.CompatibilityStatus + " | F10");
+            float tabWidth = (width - 24) / Tabs.Length;
+            for (int i = 0; i < Tabs.Length; i++)
+                if (GUI.Button(new Rect(x + 12 + i * tabWidth, y + 58, tabWidth - 3, 28),
+                    (tab == i ? "[" + Tabs[i] + "]" : Tabs[i]))) tab = i;
+
+            void Label(float top, string value) => GUI.Label(new Rect(x + 15, y + top, width - 30, 25), value);
+            bool Button(float top, string value) => GUI.Button(new Rect(x + 15, y + top, width - 30, 28), value);
+            bool Small(float top, float left, float size, string value) => GUI.Button(new Rect(x + left, y + top, size, 28), value);
+
+            if (tab == 0)
             {
-                if (healthPage)
-                {
-                    GUI.Label(new Rect(x + 12, y + 92, width - 145, 24), "Hero maximum health (experimental, solo)");
-                    if (GUI.Button(new Rect(x + width - 125, y + 90, 113, 26), "Back to AP")) healthPage = false;
-                    GUI.Label(new Rect(x + 12, y + 124, width - 24, 24), "Selected: " + HouseRules.NextHealthPercent + "% max HP");
-                    if (HouseRules.CanConfigureHealth)
-                    {
-                        if (GUI.Button(new Rect(x + 12, y + 154, 80, 27), "-25%")) HouseRules.ChangeHealthPercent(-25);
-                        if (GUI.Button(new Rect(x + 100, y + 154, 80, 27), "+25%")) HouseRules.ChangeHealthPercent(25);
-                        if (GUI.Button(new Rect(x + 188, y + 154, 100, 27), "Normal")) HouseRules.ChangeHealthPercent(-100);
-                    }
-                    GUI.Label(new Rect(x + 12, y + 187, width - 24, 24), HouseRules.HealthStatus);
-                    GUI.Label(new Rect(x + 12, y + 216, width - 24, 24), HouseRules.HealthCounts);
-                    GUI.Label(new Rect(x + 12, y + 245, width - 24, 24), "10 base HP -> " + HealthBudget.Target(10, HouseRules.NextHealthPercent) + " max HP");
-                    if (height >= 320 && HouseRules.CanConfigureHealth && GUI.Button(new Rect(x + 12, y + 274, width - 24, 26), HouseRules.NativeHealthRequested ? "Cancel health trial" : "Queue health for next new solo game")) HouseRules.ToggleNativeHealthArm();
-                    if (height >= 345) GUI.Label(new Rect(x + 12, y + 302, width - 24, 24), "Queue, then start a NEW disposable solo game. No restart.");
-                    if (height >= 370) GUI.Label(new Rect(x + 12, y + 330, width - 24, 24), "See hero-health-probe.txt for before/after verification.");
-                    return;
-                }
-                GUI.Label(new Rect(x + 12, y + 92, width - 145, 24), "Extra hero action points (solo)");
-                if (GUI.Button(new Rect(x + width - 125, y + 90, 113, 26), "Hero health")) healthPage = true;
-                GUI.Label(new Rect(x + 12, y + 124, width - 24, 24), "Active: +" + HouseRules.ActiveBonus + " AP" + (HouseRules.ActiveBonus == 0 ? " (off)" : ""));
+                Label(97, "Game version: " + plugin.GameVersion);
+                Label(128, "Selected profile: " + HouseRules.PresetName);
+                Label(159, "AP: +" + HouseRules.ActiveBonus + " | " + (HouseRules.ActiveRefundMode ? "refund mode" : "cap mode") + (HouseRules.ModePending ? " | mode change pending" : ""));
+                Label(190, "Health preference: " + HouseRules.NextHealthPercent + "%");
+                Label(221, HouseRules.HealthStatus);
+                Label(252, HouseRules.HealthCounts);
+                Label(283, "Rules: disposable local solo only. Back up saves separately.");
+                Label(314, "Health: explicitly queue before each NEW campaign.");
+                Label(345, "AP bonus edits apply live; module switches require restart.");
+                return;
+            }
+            if (tab == 1)
+            {
+                Label(97, "Extra action points | Selected profile: " + HouseRules.PresetName);
+                Label(128, "Active: +" + HouseRules.ActiveBonus + " AP");
                 if (HouseRules.CanConfigure)
                 {
-                    if (GUI.Button(new Rect(x + 12, y + 154, 80, 27), "-1 AP")) HouseRules.ChangeBonus(-1);
-                    if (GUI.Button(new Rect(x + 100, y + 154, 80, 27), "+1 AP")) HouseRules.ChangeBonus(1);
+                    if (Small(157, 15, 80, "-1 AP")) HouseRules.ChangeBonus(-1);
+                    if (Small(157, 103, 80, "+1 AP")) HouseRules.ChangeBonus(1);
+                    if (Small(157, 191, 100, "Disable")) HouseRules.ChangeBonus(-3);
                 }
-                if (GUI.Button(new Rect(x + 188, y + 154, 100, 27), "Disable")) HouseRules.ChangeBonus(-3);
-                GUI.Label(new Rect(x + 12, y + 187, width - 24, 24), HouseRules.Status);
-                GUI.Label(new Rect(x + 12, y + 216, width - 24, 24), HouseRules.Counts);
-                GUI.Label(new Rect(x + 12, y + 245, width - 24, 25), "Target: " + (2 + HouseRules.ActiveBonus) + (HouseRules.ActiveRefundMode ? " one-AP actions (cap unchanged)." : " AP (normal hero)."));
-                if (height >= 335 && HouseRules.CanConfigure && GUI.Button(new Rect(x + 12, y + 274, width - 24, 27), "Adjust existing AP caps: " + (HouseRules.ActiveAdjustExisting ? "ON" : "OFF"))) HouseRules.ToggleAdjustExisting();
-                if (height >= 335) GUI.Label(new Rect(x + 12, y + 302, width - 24, 25), HouseRules.ActiveRefundMode ? "Refunds count AP already above 2; cap is unchanged." : "Existing cap adjustment: disposable test saves only.");
-                if (height >= 365 && HouseRules.CanConfigure && GUI.Button(new Rect(x + 12, y + 330, width - 24, 27), "AP refund mode: " + (HouseRules.ActiveRefundMode ? "ON" : "OFF") + (HouseRules.ModePending ? " (change queued)" : ""))) HouseRules.ToggleRefundMode();
-                if (height >= 390) GUI.Label(new Rect(x + 12, y + 360, width - 24, 24), HouseRules.ModePending ? "Mode queued: return to main menu before next adventure." : "Bonus applies live; mode changes between adventures.");
+                Label(190, HouseRules.Status);
+                Label(216, HouseRules.Counts);
+                Label(242, "Target: " + (2 + HouseRules.ActiveBonus) + (HouseRules.ActiveRefundMode ? " one-AP actions; cap unchanged." : " AP (normal hero)."));
+                if (HouseRules.CanConfigure && Button(270, "Include existing AP caps: " + (HouseRules.ActiveAdjustExisting ? "ON" : "OFF"))) HouseRules.ToggleAdjustExisting();
+                if (HouseRules.CanConfigure && Button(302, "AP refund mode: " + (HouseRules.ActiveRefundMode ? "ON" : "OFF") + (HouseRules.ModePending ? " (pending)" : ""))) HouseRules.ToggleRefundMode();
+                Label(334, HouseRules.ModePending ? "Mode pending: return to main menu before next game." : "Bonus live; mode applies between adventures.");
+                Label(365, "Existing cap mode can change saves. Prefer refunds.");
                 return;
             }
-            if (diagnostics)
+            if (tab == 2)
             {
-                GUI.Label(new Rect(x + 12, y + 90, width - 24, 25), "Core method entries (not game outcomes)");
-                var summaries = CoreLogicProbe.Summary();
-                for (int i = 0; i < summaries.Length && 120 + i * 24 < height - 34; i++)
-                    GUI.Label(new Rect(x + 12, y + 120 + i * 24, width - 24, 24), summaries[i]);
-                GUI.Label(new Rect(x + 12, y + height - 30, width - 24, 24), "See core-probe.txt for attachment status.");
+                Label(97, "Native hero maximum health | fresh solo campaigns");
+                Label(128, "Next trial: " + HouseRules.NextHealthPercent + "% | 10 base HP -> " + HealthBudget.Target(10, HouseRules.NextHealthPercent));
+                if (HouseRules.CanConfigureHealth)
+                {
+                    if (Small(157, 15, 80, "-25%")) HouseRules.ChangeHealthPercent(-25);
+                    if (Small(157, 103, 80, "+25%")) HouseRules.ChangeHealthPercent(25);
+                    if (Small(157, 191, 100, "Normal")) HouseRules.ChangeHealthPercent(-100);
+                }
+                Label(190, HouseRules.HealthStatus);
+                Label(220, HouseRules.HealthCounts);
+                if (HouseRules.CanConfigureHealth && Button(250, HouseRules.NativeHealthRequested ? "Cancel / disarm health trial" : "Queue health for next NEW solo game")) HouseRules.ToggleNativeHealthArm();
+                Label(285, "Leave the current game, queue, then start a new game.");
+                Label(315, "Repeat with another fresh game; no restart required.");
+                Label(345, "Existing or previously modified saves are not safe trials.");
+                Label(375, "Report: hero-health-probe.txt");
                 return;
             }
+            if (tab == 3)
+            {
+                Label(97, "Selected preferences: " + HouseRules.PresetName);
+                for (int i = 0; i < HouseRulePreset.All.Count; i++)
+                {
+                    var preset = HouseRulePreset.All[i];
+                    string description = $"{preset.Name}  |  +{preset.Bonus} AP  |  {preset.HealthPercent}% HP";
+                    if (Button(128 + 34 * i, description))
+                        message = HouseRules.ApplyPreset(preset) ? "Preferences selected. Queue health separately." : "Preset unavailable: check compatibility and modules.";
+                }
+                Label(302, "Presets prefer refund mode (changes at idle scope).");
+                Label(330, "Health is never armed by selecting a preset.");
+                Label(357, "Vanilla stops new bonuses; does not undo past writes.");
+                Label(384, message);
+                return;
+            }
+            if (tab == 5)
+            {
+                Label(97, "Compatibility: " + plugin.CompatibilityStatus);
+                Label(129, "AP: " + HouseRules.Counts);
+                Label(159, "Health: " + HouseRules.HealthCounts);
+                Label(189, "Save safety: no native health writes to loaded games.");
+                Label(219, "Unknown builds do not enable house-rule writes.");
+                Label(249, "No automatic save repair; backup before trials.");
+                if (Button(280, "Refresh local compatibility report"))
+                    message = plugin.RefreshCompatibilityReport() ? "Report refreshed." : "Report could not be written; check log.";
+                Label(317, "BepInEx/config/BattlemarkedModFramework/");
+                Label(345, "compatibility-report.txt | startup-report.txt");
+                Label(375, message);
+                return;
+            }
+
             var modules = plugin.MenuModules.ToArray();
-            int rows = Math.Max(1, (int)((height - 155) / 49));
+            Label(95, "Installed modules | change takes effect on next launch");
+            int rows = Math.Max(1, (int)((height - 184) / 49));
             int pages = Math.Max(1, (modules.Length + rows - 1) / rows);
             page = Math.Max(0, Math.Min(page, pages - 1));
             for (int i = 0; i < rows && page * rows + i < modules.Length; i++)
             {
-                var m = modules[page * rows + i]; float top = y + 91 + i * 49;
-                GUI.Label(new Rect(x + 12, top, width - 120, 23), m.Name == m.Id ? m.Id : m.Name);
-                GUI.Label(new Rect(x + 12, top + 22, width - 120, 23), (plugin.IsRunning(m.Id) ? "Running" : "Not running") + " | Next launch: " + (m.Enabled.Value ? "enabled" : "disabled"));
+                var m = modules[page * rows + i]; float top = y + 125 + i * 49;
+                GUI.Label(new Rect(x + 15, top, width - 120, 23), m.Name);
+                GUI.Label(new Rect(x + 15, top + 22, width - 120, 23), (plugin.IsRunning(m.Id) ? "Running" : "Not running") + " | Next launch: " + (m.Enabled.Value ? "enabled" : "disabled"));
                 if (GUI.Button(new Rect(x + width - 105, top + 7, 93, 27), m.Enabled.Value ? "Disable" : "Enable"))
                 {
-                    try { m.Enabled.Value = !m.Enabled.Value; message = "Saved; restart Battlemarked to apply."; }
+                    try { m.Enabled.Value = !m.Enabled.Value; message = "Saved; restart Battlemarked to apply module switches."; }
                     catch (Exception ex) { message = "Could not save settings; see BepInEx log."; log.LogWarning(ex.Message); }
                 }
             }
-            if (GUI.Button(new Rect(x + 12, y + height - 62, 70, 24), "Previous")) page = Math.Max(0, page - 1);
-            GUI.Label(new Rect(x + 90, y + height - 62, 100, 24), $"{page + 1}/{pages}");
-            if (GUI.Button(new Rect(x + 150, y + height - 62, 70, 24), "Next")) page = Math.Min(pages - 1, page + 1);
-            GUI.Label(new Rect(x + 12, y + height - 32, width - 24, 24), message);
+            if (Small(height - 59, 15, 85, "Previous")) page = Math.Max(0, page - 1);
+            GUI.Label(new Rect(x + 108, y + height - 59, 100, 24), $"{page + 1}/{pages}");
+            if (Small(height - 59, 170, 85, "Next")) page = Math.Min(pages - 1, page + 1);
+            Label(height - 30, message);
         }
         catch (Exception ex) { broken = true; log.LogWarning("BMF desktop menu disabled for this session: " + ex); }
     }

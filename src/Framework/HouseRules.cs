@@ -10,7 +10,7 @@ namespace Battlemarked.ModFramework;
 internal sealed class HouseRules : BattlemarkedModule
 {
     public override string Id => "org.battlemarked.houserules";
-    public override string Name => "House rules (extra hero AP)";
+    public override string Name => "House rules (AP and hero health)";
     private ModuleContext ctx;
     private HeroHealthRule health;
     internal static bool NativeHealthRequested => running?.health is { } h && (h.Armed || h.Queued);
@@ -102,6 +102,50 @@ internal sealed class HouseRules : BattlemarkedModule
         // Disabling stops new grants; already outstanding cap restorations still run.
         r.RefreshApStatus();
         r.SaveApPreference(() => r.nextBonus.Value = r.bonus, "Live AP bonus=" + r.bonus);
+    }
+    internal static string PresetName => running == null ? "Unavailable" :
+        HouseRulePreset.Match(ActiveBonus, NextHealthPercent, running.requestedRefundMode, ActiveAdjustExisting);
+    internal static bool ApplyPreset(HouseRulePreset preset)
+    {
+        var r = running;
+        if (r == null || !CanConfigure || !CanConfigureHealth || Environment.CurrentManagedThreadId != r.mainThread ||
+            !HouseRulePreset.All.Contains(preset)) return false;
+        // Preference changes only: no native writes, budget resets, or health authorization.
+        if (r.health.Armed || r.health.Queued) r.health.Disarm("Preset selected; queue health separately");
+        r.health.SetPercent(preset.HealthPercent);
+        r.bonus = preset.Bonus;
+        r.adjustExisting = preset.AdjustExisting;
+        r.requestedRefundMode = preset.Refund;
+        r.TryApplyModeChange();
+        r.RefreshApStatus();
+        r.SaveApPreference(() =>
+        {
+            r.nextBonus.Value = r.bonus;
+            r.nextAdjustExisting.Value = r.adjustExisting;
+            r.nextRefundMode.Value = r.requestedRefundMode;
+        }, "House rule preset selected: " + preset.Name);
+        return true;
+    }
+
+    internal static string[] CompatibilityLines()
+    {
+        var r = running;
+        if (r == null) return new[] { "House rules not active; inspect module state and BepInEx log." };
+        return new[] {
+            "AP: " + Status,
+            "AP: " + Counts,
+            $"AP mode={(r.refundMode ? "refund" : "cap")} requested={(r.requestedRefundMode ? "refund" : "cap")} pending={ModePending}",
+            $"AP pending cap restores={r.heroes.Values.Count(h => h.PendingRestore)} unresolved={r.unresolved}",
+            "Scope: " + r.lastScope,
+            "Session flags: " + r.lastFlags,
+            "HUD hook: " + r.hudHook,
+            "Room hook: " + r.roomHook,
+            $"Fresh campaign hooks requested successfully={r.healthStartBound}",
+            "Health: " + HealthStatus,
+            "Health: " + HealthCounts,
+            r.health?.SafetySummary ?? "Health ledger unavailable",
+            "Selected preset: " + PresetName
+        };
     }
     private void SaveApPreference(Action update, string detail)
     {

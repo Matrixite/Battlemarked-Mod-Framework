@@ -1,6 +1,6 @@
 namespace Battlemarked.ModFramework;
 
-// Session-local reservations only. Keep stable sheet IDs and stat identities private;
+// Campaign-local reservations only. Keep stable sheet IDs and stat identities private;
 // once a write is attempted neither identity can be authorized a second time.
 internal sealed class NativeHealthPartyTrial
 {
@@ -21,13 +21,19 @@ internal sealed class NativeHealthPartyTrial
     internal bool CanQueue(int percent)
         => HealthBudget.Normalize(percent) > 100 && !Ended && entries.Count == 0;
 
+    internal bool CanQueueNext(int percent, bool hasBoundRoom)
+        => HealthBudget.Normalize(percent) > 100 && !hasBoundRoom && (Ended || entries.Count == 0);
+
+    internal bool CanReserveIdentity(string sheetId, IntPtr key)
+        => !Ended && !string.IsNullOrWhiteSpace(sheetId) && key != IntPtr.Zero &&
+           entries.Count < Maximum && !entries.ContainsKey(sheetId) && !keys.Contains(key);
+
     internal Entry Find(string sheetId) => entries.TryGetValue(sheetId, out var entry) ? entry : null;
 
     internal Entry Reserve(string sheetId, IntPtr key, int baseline, int target, int current,
         int rawBaseline = 0, HealthModifierStamp[] verifiedModifiers = null)
     {
-        if (Ended || string.IsNullOrWhiteSpace(sheetId) || key == IntPtr.Zero ||
-            entries.Count >= Maximum || entries.ContainsKey(sheetId) || keys.Contains(key) ||
+        if (!CanReserveIdentity(sheetId, key) ||
             baseline <= 0 || target <= baseline || current <= 0 || current > baseline) return null;
         var stamps = verifiedModifiers ?? Array.Empty<HealthModifierStamp>();
         if (rawBaseline == 0 && stamps.Length == 0) rawBaseline = baseline;
@@ -44,7 +50,7 @@ internal sealed class NativeHealthPartyTrial
     }
 
     // Initial splash/menu transitions are allowed before any reservation, but once an
-    // attempt occurs, teardown or scene change permanently seals the trial for this process.
+    // attempt occurs, teardown or scene change permanently seals this campaign trial.
     internal bool EndScope()
     {
         if (Ended || entries.Count == 0) return false;

@@ -1,5 +1,28 @@
-# v0.5.13 alpha validation
+# v0.6.0-alpha validation
 
-User v0.5.12 report: 12 AP refunds, four verified resets, zero framework errors, three health max increases, 32/32 retained observations, two heroes healed above baseline. Fourth health candidate skipped six times: current/effective/permanent max=25, raw max=22, modifier count=1. Actual modifier kind and permanence not logged in that build.
+## Baseline evidence
 
-Supplied Jade.GameModel.dll PE/CLR metadata inspected directly: verified exact StatModifier getter signatures and enum constants AdditionAndSubtraction=0/Permanent=1; Stat.SetMaxValue and generated set_maxValue raw field setter signatures 2001010C. No method body semantics inferred as proven. Runtime writes allowed only with verified positive or zero integral permanent additive health stamps explaining original raw-to-effective difference; 22+3=25 → raw 29 + unchanged 3 = 32 at 125%. Stamp identity/amount and all native getters reverified before, after and during observations. Current HP preserved. Same-object same-modifier rollback via original raw field on modified path; verify original max before restoring HP. No modifier mutation, AP or scope changes. Unmodified path retains existing facade API. Added static regression assertions for raw/effective target, stamp identity, sum, bounds, unsupported input and reservation. git diff --check passed; dotnet unavailable, so compile/tests and runtime modification/rollback are not verified. Disposable fresh solo only.
+In the user's v0.5.13 fresh local solo session, AP recorded 12 verified refunds and four resets with no framework errors. All four heroes received verified health increases (16→20, 25→32 with raw 22→29 and +3 permanent additive modifier preserved, 20→25, 16→20). All four healed to target; 46/46 subsequent observations retained the maximum. This is evidence for **v0.5.13**, not confirmation of v0.6 runtime behavior.
+
+## v0.6 changes and checks
+
+- Exact game fingerprint, room/host/local player and active-hero eligibility, native setters, additive modifier verification, rollback and AP accounting retained.
+- A sealed party can be replaced only when a new explicit queue is claimed from the fresh campaign hook. The original scope remains sealed; four heroes maximum per trial.
+- Native maxima are journaled before any write; known baseline mismatches and corrupt/unsavable ledger data fail closed. This does not independently prove that every unknown ID or old save is clean.
+- Added standalone regression assertions for new-campaign eligibility, bound-room rejection, repeat baselines, cross-launch compounding rejection, changed pointer baseline, raw identity privacy, missing/corrupt journal, and preset matching/limits.
+- Static diff/structure review performed. The .NET SDK and Windows PowerShell are unavailable in the development workspace; build, standalone C# tests, PowerShell execution, and in-game behavior are **not verified**.
+
+## Required Windows validation before marking stable
+
+1. Back up saves separately. Close the game; run Check-BMF.cmd and Install-BMF.cmd on the exact verified game build. Confirm no compile errors and a backup manifest in BepInEx/BMF-Backups. Run the standalone suite with:
+   ```powershell
+   dotnet run --project tests/CoreTests/CoreTests.csproj
+   ```
+2. Press F10. Check six tabs, profile labels and module next-launch state. Choose Tested party (+3 AP / 125% HP). Confirm health is not armed by this action and refund mode is active or pending idle.
+3. Queue health manually. Start a new disposable local solo game, move all four heroes, take damage, heal, finish a turn. Expect verified targets and 12 refunds/four resets as in v0.5.13 for the same party.
+4. Return to the main menu **without restarting**. Queue health again and start another genuinely new disposable local solo game. Check Claims=2 and prior-trial counts; each known hero must either match its baseline and receive the same target or be skipped with a baseline rejection. No compounding.
+5. Queue then load an existing disposable campaign instead: no health authorization/writes. Select a different preset while queued: queue cancelled. Never test on a valuable save or in multiplayer.
+6. Refresh Reports. Check compatibility-report.txt, hero-health-probe.txt, house-rules-probe.txt, BepInEx/LogOutput.log. Confirm no framework errors, no lost observations, no rollback failure. Share reports after checking for private data.
+7. With the game closed, verify the DLL restore workflow on a test installation (both known DLLs, config preserved, checksums match). Restoration of DLLs is not restoration of saves.
+
+Stop if verification fails; do not use affected adventures. Preserve the baseline ledger for investigation. The installer never edits or backs up game saves.

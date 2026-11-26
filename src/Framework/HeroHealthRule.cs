@@ -20,7 +20,9 @@ internal sealed class HeroHealthRule
     private object healthType, additiveKind, permanentKind;
     private bool additiveBinding;
     private string additiveStatus = "not attempted";
-    private readonly NativeHealthPartyTrial party = new();
+    private NativeHealthPartyTrial party = new();
+    private readonly HealthSafetyLedger ledger;
+    private int previousTrials, previousApplied, previousVerified, previousLost;
     private int errors, skipped, missingIdentity, rejectedReservations, armRejections, freshStarts, existingStarts, claims, roomRejections;
     private DateTime lastWrite;
     private readonly List<string> samples = new();
@@ -34,16 +36,19 @@ internal sealed class HeroHealthRule
     private int Verified => party.Entries.Sum(e => e.Verified);
     private int Lost => party.Entries.Sum(e => e.Lost);
     internal string Status => !ready ? "Native health metadata unavailable" : faulted ? "Health trial stopped; see report" :
-        party.Ended ? $"Party trial ended: {Applied} applied" :
+        !ledger.Ready ? "Health baseline ledger blocked; see report" :
         writeHalted ? $"Further writes stopped: {Applied} applied" :
         Armed ? $"Armed: {percent}% | {Applied}/{NativeHealthPartyTrial.Maximum} heroes applied" :
         Queued ? $"Queued: {percent}% for next new solo game" :
+        party.Ended ? $"Trial ended: {Applied} applied | {activationStatus}" :
         $"Read-only; {activationStatus}";
+    internal string SafetySummary => ledger.Summary + $" | prior trials={previousTrials}, applied={previousApplied}, verified={previousVerified}, lost={previousLost}";
     internal string Counts => $"Verified: {Verified} | Lost: {Lost} | Errors: {errors}";
-    internal void ChangePercent(int delta)
+    internal void ChangePercent(int delta) => SetPercent(Math.Clamp(NextPercent + delta, 100, 200));
+    internal void SetPercent(int selected)
     {
         if (!Available) return;
-        int selected = Math.Clamp(NextPercent + delta, 100, 200);
+        selected = HealthBudget.Normalize(selected);
         if (selected == NextPercent) return;
         // A changed percentage cannot silently change an already authorized target.
         if (Armed || Queued) Disarm("Target changed; queue again");
@@ -69,12 +74,12 @@ internal sealed class HeroHealthRule
 
     internal void QueueForFreshCampaign()
     {
-        if (!Available || faulted || writeHalted)
+        if (!Available || faulted || writeHalted || !ledger.Ready)
         { RejectArm("Health trial unavailable"); return; }
-        if (!party.CanQueue(NextPercent))
+        if (!party.CanQueueNext(NextPercent, authorization.HasRoom))
         {
             RejectArm(NextPercent == 100 ? "Select more than 100%" :
-                "Party trial already attempted; no second trial this launch");
+                "Leave the current trial before queueing another new campaign");
             return;
         }
         percent = NextPercent;
@@ -95,7 +100,7 @@ internal sealed class HeroHealthRule
             dirty = true;
             return;
         }
-        if (!Available || faulted || writeHalted || !party.CanQueue(percent))
+        if (!Available || faulted || writeHalted || !ledger.Ready || !party.CanQueueNext(percent, authorization.HasRoom))
         {
             CancelForTransition("Queued trial no longer available");
             return;
@@ -106,6 +111,18 @@ internal sealed class HeroHealthRule
                 "New game room could not be verified; queue again before another new game");
             return;
         }
+        // Reset reservations only after a new, verified local room claims the request.
+        // Persistent baseline checks remain in force across all campaigns and launches.
+        if (party.Entries.Count != 0)
+        {
+            previousTrials++;
+            previousApplied += Applied;
+            previousVerified += Verified;
+            previousLost += Lost;
+            samples.Clear();
+            candidateRejections.Clear();
+        }
+        party = new NativeHealthPartyTrial();
         claims++;
         SetActivation($"Fresh solo room claimed at {percent}%");
         Write();
@@ -172,7 +189,7 @@ internal sealed class HeroHealthRule
         if (party.EndScope() || authorization.Observed)
         {
             authorization.Cancel();
-            SetActivation("Party trial scope ended; no further writes or restoration on departed objects. Discard test adventure.");
+            SetActivation("Scope ended; queue another fresh game");
         }
         dirty = true;
     }
@@ -187,6 +204,7 @@ internal sealed class HeroHealthRule
     internal HeroHealthRule(ModuleContext context, Type piece, Type facade, Type stat, Type enumType)
     {
         ctx = context;
+        ledger = new HealthSafetyLedger(Path.Combine(ctx.DataDirectory, "health-baselines-v060.txt"));
         nextPercent = ctx.Config.Bind("HouseRules", "HeroMaxHealth050", 100,
             "Experimental max health target 100/125/150/175/200%. Native maximum trial requires an explicit queue before starting a new solo campaign. Fresh disposable solo only.");
         // Retire the old boolean. It is not an authorization in this build.
@@ -447,6 +465,9 @@ internal sealed class HeroHealthRule
             if (rejection != null)
             { RejectCandidate(rejection, readings); return; }
             int target = HealthBudget.Target(nativeMax, percent);
+            if (!party.CanReserveIdentity(id, key)) { rejectedReservations++; dirty = true; return; }
+            if (!ledger.TryAuthorize(id, key, (int)rawMax, nativeMax, modifierCount, out string ledgerRejection))
+            { RejectCandidate("baseline safety: " + ledgerRejection, readings); return; }
             var trial = party.Reserve(id, key, nativeMax, target, initial, (int)rawMax, stamps);
             if (trial == null) { rejectedReservations++; dirty = true; return; }
             int baseline = trial.Baseline;
@@ -516,9 +537,10 @@ internal sealed class HeroHealthRule
                 "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + Status,
                 $"ConfiguredPercent={percent} NextPercent={NextPercent} Armed={Armed} Queued={Queued} ScopeEnded={party.Ended} WritesHalted={writeHalted} Attempts={party.Entries.Count} Applied={Applied} Observations={party.Entries.Sum(e => e.Observations)} VerifiedObservations={Verified} Lost={Lost} Skipped={skipped} MissingIdentity={missingIdentity} RejectedReservations={rejectedReservations} ArmRejections={armRejections} Errors={errors}",
                 "Activation=" + activationStatus,
+                SafetySummary,
                 "Additive modifier binding: " + additiveStatus,
                 $"Fresh start binding: {freshStartBinding} NewCampaigns={freshStarts} ExistingCampaigns={existingStarts} Claims={claims} RoomRejections={roomRejections} LastRoomRejection={lastRoomRejection}",
-                "Up to four unique character-sheet IDs and native health objects; IDs/pointers not logged. Native maximum may persist. Discard test adventure." };
+                "Up to four unique character-sheet IDs and native health objects per verified fresh campaign; IDs/pointers not logged. Native maximum may persist. Discard test adventure." };
             foreach (var e in party.Entries.OrderBy(e => e.Id))
                 lines.Add($"hero#{e.Id} applied={e.Applied} baseline={e.Baseline} target={e.Target} rawBaseline={e.RawBaseline} rawTarget={e.RawTarget} preservedModifiers={e.Modifiers.Length} originalCurrent={e.OriginalCurrent} lastCurrent={e.LastCurrent} lastMax={e.LastMax} highestCurrent={e.HighestCurrent} observations={e.Observations} verified={e.Verified} lost={e.Lost} aboveBaseline={e.AboveBaseline} replacedStat={e.ReplacedStat} rolledBack={e.RolledBack} rollbackFailed={e.RollbackFailed}");
             foreach (var reason in candidateRejections.OrderBy(e => e.Key))
