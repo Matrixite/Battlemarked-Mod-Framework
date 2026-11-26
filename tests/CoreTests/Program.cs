@@ -198,3 +198,13 @@ Check(!ApRefundBudget.CanRefund(3, liveUsed, 2, false, true, 2, 1, 1, true), "re
 Check(ApRefundBudget.CanReset(true, 0, 2, true, true), "verified refill remains a reset while disabled");
 Check(!ApRefundBudget.CanReset(true, 2, 2, true, true), "full-to-full duplicate never resets a live budget");
 Console.WriteLine("PASS: live AP settings and refund-cycle guards.");
+
+Check(SessionModelGuard.RetainCapture(12, 12), "scene poll retains a model captured in the new scene");
+Check(!SessionModelGuard.RetainCapture(11, 12), "old-scene capture cannot authorize a new scene");
+Check(!SessionModelGuard.RetainCapture(null, 12), "unknown capture scene is rejected");
+Check(SessionModelGuard.IsSameScene(12, "Main", 12, "Main"), "duplicate scene poll cannot end a new scope");
+Check(!SessionModelGuard.IsSameScene(11, "Main", 12, "Main"), "different scene handle still resets scope");
+Check(SessionModelGuard.MatchesTeardown(new IntPtr(1), new IntPtr(1)), "current model teardown clears its capture");
+Check(!SessionModelGuard.MatchesTeardown(new IntPtr(1), new IntPtr(2)), "departed model cannot clear a replacement capture");
+Check(!SessionModelGuard.MatchesTeardown(IntPtr.Zero, IntPtr.Zero), "unknown identity is not a match");
+Console.WriteLine("PASS: session model lifecycle guards.");

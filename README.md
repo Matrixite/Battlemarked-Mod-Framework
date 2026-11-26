@@ -1,4 +1,12 @@
-# Battlemarked Mod Framework (BMF) — v0.5.8-alpha
+# Battlemarked Mod Framework (BMF) — v0.5.9-alpha
+
+## New in v0.5.9 — new-adventure session capture
+
+User reported needing to create a fresh game and restart before rules took effect. The exact failing runtime condition is not yet confirmed; no v0.5.8 failure probe was supplied. The prior implementation cleared a captured HeroSelectModel on every polled Unity scene change, even if native callbacks had already supplied a model belonging to the new scene. This could discard the model or end a newly started health trial. It also cleared all state from any model teardown, including unrelated instances.
+
+This version tags each main-thread capture with the actual scene handle and native model identity, synchronizes scene state before AP operations, and retains only a capture made in the new scene. Duplicate scene notifications do not clear it again. Matched teardowns clear the relevant scope/candidate rather than discarding a newer unrelated capture. AP operations whose model or scene changed during the operation are rejected. Additional optional capture hooks on the already verified HeroSelectModel getters and active-hero checks, and the supplied assembly report's InGameMenuPresenter.OnTurnStart (200001) and get_heroSelectModel (2000129080), supply the model without changing the game. Missing optional hooks are logged. Existing exact build, main-thread, local solo/host/active hero checks are retained; no fallback authorizes unknown scope. Health and AP calculations unchanged.
+
+Start a new disposable solo adventure without restarting the game. Set AP and arm health at the main menu, move all heroes, end a round, and upload house-rules-probe.txt, hero-health-probe.txt and LogOutput.log **before restarting**. The AP report now records model/HUD captures, retained captures, ignored teardowns, and separate scope-rejection reasons. If rules do not activate this will distinguish failed model acquisition from a rejected gameplay/hero flag. Party health remains experimental; native changes may persist. Discard test adventure.
 
 ## New in v0.5.8 — live AP settings, no restart
 

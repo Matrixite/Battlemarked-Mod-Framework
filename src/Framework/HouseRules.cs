@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Threading;
 using HarmonyLib;
 using BepInEx.Configuration;
+using UnityEngine.SceneManagement;
 
 namespace Battlemarked.ModFramework;
 
@@ -42,6 +43,13 @@ internal sealed class HouseRules : BattlemarkedModule
     internal static void ChangeHealthPercent(int delta) => running?.health?.ChangePercent(delta);
     private static HouseRules running;
     private static object model;
+    private PropertyInfo modelPointer;
+    private MethodInfo hudModel;
+    private IntPtr modelKey, scopeModelKey;
+    private int? sceneHandle, capturedSceneHandle;
+    private int checkingScope, modelCaptures, hudCaptures, retainedCaptures, ignoredTeardowns, captureErrors;
+    private string lastScope = "not observed", hudHook = "not attempted";
+    private readonly Dictionary<string, int> scopeRejections = new(StringComparer.Ordinal);
     private MethodInfo solo, local, multi, inGame, playing, host, activeHero, localHero, sheet, allowance, remaining;
     private MethodInfo stats, getStat, getMax, getObject, getValue, getObjectMax, getPermanentMax;
     private object apType;
@@ -231,8 +239,30 @@ internal sealed class HouseRules : BattlemarkedModule
             try { health = new HeroHealthRule(ctx, piece, facade, stat, enumType); }
             catch (Exception ex) { ctx.Log.LogWarning("Health rule unavailable: " + ex.Message); }
             var teardown = Exact(hero, "TearDown", "200001");
-            running = this; model = null;
+            modelPointer = hero.GetProperty("Pointer", BindingFlags.Public | BindingFlags.Instance);
+            if (modelPointer?.PropertyType != typeof(IntPtr) || !modelPointer.CanRead)
+                throw new InvalidOperationException("Native hero model identity unavailable");
+            running = this; ClearCandidate();
             foreach (var method in new[] { solo, local, playing }) ctx.Patches.Patch(method, postfix: Hook(nameof(Capture)));
+            // Additional read-only capture opportunities in the current UI model.
+            foreach (var method in new[] { inGame, host, multi, activeHero, localHero })
+            {
+                try { ctx.Patches.Patch(method, postfix: Hook(nameof(Capture))); }
+                catch (Exception ex) { ctx.Log.LogWarning("Optional model capture " + method.Name + ": " + ex.Message); }
+            }
+            // Exact metadata from the supplied interop report. Capture a live model
+            // from the in-game HUD at turn start if the selection model was missed.
+            try
+            {
+                var presenter = view.GetType("Jade.GameView.UI.HUD.InGameMenuPresenter", true);
+                hudModel = Exact(presenter, "get_heroSelectModel", "2000129080");
+                var turnStart = Exact(presenter, "OnTurnStart", "200001");
+                if (hudModel.ReturnType != hero || hudModel.IsStatic || turnStart.IsStatic)
+                    throw new InvalidOperationException("Unexpected HUD model signature");
+                ctx.Patches.Patch(turnStart, postfix: Hook(nameof(CaptureFromHud)));
+                hudHook = "attached";
+            }
+            catch (Exception ex) { hudHook = "unavailable: " + ex.Message; ctx.Log.LogWarning("Optional HUD capture: " + ex.Message); }
             ctx.Patches.Patch(teardown, prefix: Hook(nameof(ClearModel)), postfix: Hook(nameof(ClearModel)));
             ctx.Patches.Patch(refill, prefix: Hook(nameof(BeforeRefill)), postfix: Hook(nameof(AfterRefill)));
             ctx.Patches.Patch(spend, prefix: Hook(nameof(BeforeSpend)), postfix: Hook(nameof(AfterSpend)));
@@ -249,17 +279,87 @@ internal sealed class HouseRules : BattlemarkedModule
         }
         Write();
     }
+    private IntPtr ModelKey(object candidate) => candidate == null ? IntPtr.Zero : (IntPtr)modelPointer.GetValue(candidate);
     private static void Capture(object __instance)
-    { var r = running; if (r != null && Environment.CurrentManagedThreadId == r.mainThread) model = __instance; }
-    private static void ClearModel()
     {
         var r = running;
-        if (r != null && Environment.CurrentManagedThreadId == r.mainThread)
+        if (r != null && Environment.CurrentManagedThreadId == r.mainThread && r.checkingScope == 0)
+            r.CaptureModel(__instance, false);
+    }
+    private static void CaptureFromHud(object __instance)
+    {
+        var r = running;
+        if (r == null || Environment.CurrentManagedThreadId != r.mainThread || r.checkingScope != 0) return;
+        try { r.CaptureModel(r.hudModel.Invoke(__instance, null), true); }
+        catch (Exception ex) { r.CaptureError(ex); }
+    }
+    private void CaptureModel(object candidate, bool fromHud)
+    {
+        if (candidate == null) return;
+        try
         {
-            r.LoseScope("session teardown");
-            r.teardownSinceLocalScope = true;
-            model = null;
+            IntPtr key = ModelKey(candidate);
+            if (key == IntPtr.Zero) return;
+            int handle = SceneManager.GetActiveScene().handle;
+            model = candidate; modelKey = key; capturedSceneHandle = handle;
+            modelCaptures++;
+            if (fromHud) hudCaptures++;
+            dirty = true;
         }
+        catch (Exception ex) { CaptureError(ex); }
+    }
+    private void CaptureError(Exception ex)
+    {
+        captureErrors++; dirty = true;
+        if (captureErrors == 1) ctx.Log.LogWarning("Model capture skipped: " + ex.Message);
+    }
+    private void ClearCandidate()
+    {
+        model = null; modelKey = IntPtr.Zero; capturedSceneHandle = null;
+    }
+    private static void ClearModel(object __instance)
+    {
+        var r = running;
+        if (r == null || Environment.CurrentManagedThreadId != r.mainThread) return;
+        try
+        {
+            IntPtr retired = r.ModelKey(__instance);
+            bool matchCandidate = SessionModelGuard.MatchesTeardown(retired, r.modelKey);
+            bool matchScope = SessionModelGuard.MatchesTeardown(retired, r.scopeModelKey);
+            if (retired != IntPtr.Zero && !matchCandidate && !matchScope)
+            { r.ignoredTeardowns++; r.dirty = true; return; }
+            if (matchScope || r.scopeModelKey == IntPtr.Zero || retired == IntPtr.Zero)
+            {
+                r.LoseScope("session teardown");
+                r.scopeModelKey = IntPtr.Zero;
+                r.teardownSinceLocalScope = true;
+            }
+            if (matchCandidate || retired == IntPtr.Zero) r.ClearCandidate();
+        }
+        catch (Exception ex)
+        {
+            r.CaptureError(ex);
+            r.LoseScope("unverified teardown");
+            r.scopeModelKey = IntPtr.Zero;
+            r.ClearCandidate();
+        }
+    }
+    private void SyncScene(int handle, string name)
+    {
+        if (SessionModelGuard.IsSameScene(sceneHandle, scene, handle, name)) return;
+        // Native callbacks can capture the new model before Plugin.Tick sees the
+        // scene change. Retain only a capture tagged with the actual new scene.
+        bool retain = model != null && SessionModelGuard.RetainCapture(capturedSceneHandle, handle);
+        LoseScope("scene changed");
+        if (retain) retainedCaptures++; else ClearCandidate();
+        sceneHandle = handle; scene = name; dirty = true;
+    }
+    private void RecordScope(string reason)
+    {
+        lastScope = reason; dirty = true;
+        if (reason == "local solo hero") return;
+        scopeRejections.TryGetValue(reason, out int previous);
+        scopeRejections[reason] = previous + 1;
     }
     private void LoseScope(string reason)
     {
@@ -278,10 +378,28 @@ internal sealed class HouseRules : BattlemarkedModule
     {
         var m = model;
         if (m == null) return "no session model";
-        if (!Flag(solo, m) || !Flag(local, m) || Flag(multi, m) || !Flag(inGame, m) || !Flag(playing, m) || !Flag(host, m)) return "not verified local solo gameplay";
-        var id = sheet.Invoke(piece, null);
-        if (id == null || !Flag(activeHero, m, id) || !Flag(localHero, m, id)) return "not verified local active hero";
-        return "local solo hero";
+        try
+        {
+            if (!SessionModelGuard.RetainCapture(capturedSceneHandle, SceneManager.GetActiveScene().handle))
+                return "model from different scene";
+        }
+        catch { return "scene not verified"; }
+        checkingScope++;
+        try
+        {
+            if (!Flag(solo, m)) return "not single player";
+            if (!Flag(local, m)) return "not local game";
+            if (Flag(multi, m)) return "multiplayer";
+            if (!Flag(inGame, m)) return "not in game";
+            if (!Flag(playing, m)) return "not playing level";
+            if (!Flag(host, m)) return "local player not host";
+            var id = sheet.Invoke(piece, null);
+            if (id == null) return "missing character sheet";
+            if (!Flag(activeHero, m, id)) return "not active hero";
+            if (!Flag(localHero, m, id)) return "not local hero";
+            return "local solo hero";
+        }
+        finally { checkingScope--; }
     }
     private string Snapshot(object piece)
     {
@@ -314,6 +432,8 @@ internal sealed class HouseRules : BattlemarkedModule
         internal string Before, Operation;
         internal int SpendAmount, BeforeRemaining, BeforeMax;
         internal bool VerifiedBefore;
+        internal int SceneHandle;
+        internal IntPtr ModelKey;
     }
     private static TraceState Begin(object piece, string operation, bool isSpend)
     {
@@ -326,7 +446,13 @@ internal sealed class HouseRules : BattlemarkedModule
         r.dirty = true;
         try
         {
-            if (r.Scope(piece) != "local solo hero") { r.skipped++; return null; }
+            // Synchronize before processing AP, not a frame later in the scene poll.
+            var currentScene = SceneManager.GetActiveScene();
+            r.SyncScene(currentScene.handle, currentScene.name ?? "");
+            string scope = r.Scope(piece);
+            r.RecordScope(scope);
+            if (scope != "local solo hero") { r.skipped++; return null; }
+            r.scopeModelKey = r.modelKey;
             r.localScopeSeen = true;
             r.teardownSinceLocalScope = false;
             // Health has its own fault handling and never changes the AP budget.
@@ -340,18 +466,24 @@ internal sealed class HouseRules : BattlemarkedModule
                 r.RestoreMaximum(piece, h, r.Remaining(piece));
             int beforeRemaining = r.Remaining(piece);
             int beforeMax = r.StatMax(piece);
-            return new TraceState { Owner = r, Piece = piece, Hero = h, Operation = operation, Before = r.Snapshot(piece), BeforeRemaining = beforeRemaining, BeforeMax = beforeMax,
+            return new TraceState { Owner = r, Piece = piece, Hero = h, Operation = operation, Before = r.Snapshot(piece), BeforeRemaining = beforeRemaining, BeforeMax = beforeMax, SceneHandle = currentScene.handle, ModelKey = r.modelKey,
                 VerifiedBefore = r.refundMode && ApRefundBudget.CanObserveCycle(beforeMax, beforeRemaining) && r.ValuesMatch(piece, beforeRemaining, beforeMax) };
         }
         catch (Exception ex) { r.Fail("before " + operation, ex); return null; }
     }
-    private static void End(TraceState state, string result)
+    private static bool End(TraceState state, string result)
     {
-        if (state == null) return;
+        if (state == null) return false;
         var r = state.Owner;
-        if (r.faulted) return;
+        if (r.faulted || !ReferenceEquals(running, r)) return false;
         try
         {
+            if (state.ModelKey != r.modelKey || state.SceneHandle != SceneManager.GetActiveScene().handle)
+            {
+                r.RecordScope("model or scene changed during AP operation");
+                r.skipped++;
+                return false;
+            }
             r.Sample($"scope=local solo hero | stat#{state.Hero?.Id ?? 0} | {state.Operation} | {result} | before {state.Before} | after {r.Snapshot(state.Piece)}");
             r.samplesTaken++;
         }
@@ -370,12 +502,12 @@ internal sealed class HouseRules : BattlemarkedModule
             }
             catch (Exception ex) { r.ctx.Log.LogWarning("Health observation skipped: " + ex.Message); }
         }
+        return !r.faulted;
     }
     private static void BeforeRefill(object __0, out TraceState __state) => __state = Begin(__0, "refill", false);
     private static void AfterRefill(TraceState __state)
     {
-        End(__state, "returned");
-        if (__state == null) return;
+        if (!End(__state, "returned")) return;
         var r = __state.Owner;
         if (r.faulted || __state.Hero == null) return;
         try
@@ -412,8 +544,7 @@ internal sealed class HouseRules : BattlemarkedModule
     { __state = Begin(__1, "spend amount=" + __0, true); if (__state != null) __state.SpendAmount = __0; }
     private static void AfterSpend(bool __result, TraceState __state)
     {
-        End(__state, "result=" + __result);
-        if (__state == null) return;
+        if (!End(__state, "result=" + __result)) return;
         var r = __state.Owner;
         var h = __state.Hero;
         if (r.faulted || h == null || !__result || __state.SpendAmount <= 0) return;
@@ -552,7 +683,7 @@ internal sealed class HouseRules : BattlemarkedModule
     private void Sample(string line) { if (samples.Count < 250) samples.Add(line); dirty = true; }
     private void Fail(string stage, Exception ex)
     { faulted = true; errors++; status = "Tracing stopped: " + stage; Sample(status + " | " + ex.GetType().Name); ctx.Log.LogWarning(status + ": " + ex.Message); }
-    public override void OnSceneChanged(SceneInfo info) { LoseScope("scene changed"); scene = info.Name; model = null; dirty = true; }
+    public override void OnSceneChanged(SceneInfo info) => SyncScene(info.Handle, info.Name);
     public override void OnUpdate()
     {
         if (requestedRefundMode != refundMode && (DateTime.UtcNow - lastModeCheck).TotalSeconds >= 1)
@@ -566,6 +697,9 @@ internal sealed class HouseRules : BattlemarkedModule
         try
         {
             var lines = new List<string> { "BMF AP bonus probe (live settings; no new bonuses when bonus=0)", "Framework=" + Framework.Version, "GameVersion=" + ctx.GameVersion, "GameAssemblySHA256=" + ctx.GameAssemblySha256, "Scene=" + scene, "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + status, $"ConfiguredBonus={bonus} NextBonus={nextBonus?.Value ?? 0} RefundMode={refundMode} NextRefundMode={requestedRefundMode} ModePending={requestedRefundMode != refundMode} Refunds={refunds} RefundResets={refundResets} PartialRefundResets={partialRefundResets} PartialRefills={partialRefills} RefundElevatedSkipped={refundElevatedSkipped} Grants={grants} OpeningGrants={openingGrants} AdjustExisting={adjustExisting} NextAdjustExisting={nextAdjustExisting?.Value ?? false} AdjustedCaps={adjustedCaps} ElevatedSkipped={elevatedSkipped} Restores={restores} Pending={heroes.Values.Count(h => h.PendingRestore)} Unresolved={unresolved} DuplicateRefills={duplicateRefills} NestedSkipped={nestedSkipped}", $"Refills={refillCalls} Spends={spendCalls} Samples={samplesTaken} Skipped={skipped} Errors={errors} OtherThread={Interlocked.Read(ref otherThread)}", "Current scope anonymous native AP stat objects (not necessarily distinct heroes):" };
+            lines.Add($"SessionCapture: ModelCaptures={modelCaptures} HudCaptures={hudCaptures} RetainedCaptures={retainedCaptures} IgnoredTeardowns={ignoredTeardowns} CaptureErrors={captureErrors} LastScope={lastScope}");
+            lines.Add("HUD capture hook: " + hudHook);
+            foreach (var reason in scopeRejections.OrderBy(x => x.Key)) lines.Add($"Scope rejected: {reason.Key} count={reason.Value}");
             foreach (var h in heroes.Values) lines.Add($"stat#{h.Id} grants={h.Grants} restores={h.Restores} spent={h.Spent} bonusCycles={h.BonusCycles} refunds={h.Refunds} refundBudgetUsed={h.RefundsThisCycle} refundCycleCap={h.RefundCycleCap} pending={h.PendingRestore}");
             lines.Add("Samples (max 250; no player identifiers or raw pointers):");
             lines.AddRange(samples); File.WriteAllLines(Path.Combine(ctx.DataDirectory, "house-rules-probe.txt"), lines); dirty = false; lastWrite = DateTime.UtcNow;
