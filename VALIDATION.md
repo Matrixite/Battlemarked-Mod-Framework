@@ -1,4 +1,8 @@
-# v0.6.9-alpha validation
+# v0.6.10-alpha validation
+
+## v0.6.10 Presets visibility
+
+Extended the existing four-combination CoreTests tab visibility matrix to cover Presets with House rules disabled/enabled and Developer mode disabled/enabled. Static checks pass; executable tests and Windows compilation are pending because dotnet is unavailable here. In-game acceptance: disable House rules and confirm AP rules, Health and Presets disappear, then re-enable and confirm all return, with both developer modes. Mods, Overview and Updates stay accessible; Reports is still developer-only.
 
 ## v0.6.9 house-rule tab visibility
 

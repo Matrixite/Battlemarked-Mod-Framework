@@ -1,4 +1,8 @@
-# Battlemarked Mod Framework (BMF) — v0.6.9-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.10-alpha
+
+## v0.6.10 — hide Presets with House rules
+
+Presets now follows the same saved module enable preference as AP rules and Health. Disable House rules in F10 > Mods to hide all three tabs immediately; re-enable to show them again. Overview, Mods and Updates remain accessible. Reports continues to follow Developer mode independently. Module lifecycle and safety guards are unchanged.
 
 ## v0.6.9 — house-rule tab visibility
 

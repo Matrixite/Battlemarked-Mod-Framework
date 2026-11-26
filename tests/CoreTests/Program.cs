@@ -33,15 +33,16 @@ foreach (string id in new[] { "org.battlemarked.houserules", "org.example.custom
 Console.WriteLine("PASS: developer-mode menu visibility.");
 
 // Independent switches: developer mode controls Reports, the house-rules
-// enable preference controls AP and Health. Keep other tabs reachable.
+// enable preference controls AP, Health and Presets. Keep other tabs reachable.
 foreach (bool developerMode in new[] { false, true })
 foreach (bool houseRulesEnabled in new[] { false, true })
 {
-    foreach (string name in new[] { "Overview", "Presets", "Mods", "Updates" })
+    foreach (string name in new[] { "Overview", "Mods", "Updates" })
         Check(MenuModuleVisibility.IsTabVisible(name, developerMode, houseRulesEnabled), "regular tab always visible: " + name);
     Check(MenuModuleVisibility.IsTabVisible("Reports", developerMode, houseRulesEnabled) == developerMode, "reports follows developer mode");
     Check(MenuModuleVisibility.IsTabVisible("AP rules", developerMode, houseRulesEnabled) == houseRulesEnabled, "AP follows house-rules enabled preference");
     Check(MenuModuleVisibility.IsTabVisible("Health", developerMode, houseRulesEnabled) == houseRulesEnabled, "health follows house-rules enabled preference");
+    Check(MenuModuleVisibility.IsTabVisible("Presets", developerMode, houseRulesEnabled) == houseRulesEnabled, "presets follows house-rules enabled preference");
 }
 Check(UpdatePolicy.ForDisplay("Checking for updates...", "Update status unavailable") == "Checking for updates...", "normal status preserved");
 Check(UpdatePolicy.ForDisplay("Update failed: GITHUB.com unavailable", "Update failed; see reports") == "Update failed; see reports", "provider in status hidden");
