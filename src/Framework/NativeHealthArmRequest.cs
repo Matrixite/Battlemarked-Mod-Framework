@@ -6,8 +6,8 @@ namespace Battlemarked.ModFramework;
 // BepInEx's in-memory/config serialization. Claim before permitting any native write.
 internal sealed class NativeHealthArmRequest
 {
-    internal const string PendingFileName = "native-health-trial-055.pending";
-    internal const string ClaimedFileName = "native-health-trial-055.claimed";
+    internal const string PendingFileName = "native-health-trial-056.pending";
+    internal const string ClaimedFileName = "native-health-trial-056.claimed";
     private readonly string pendingPath, claimedPath;
 
     internal NativeHealthArmRequest(string directory)
@@ -19,7 +19,7 @@ internal sealed class NativeHealthArmRequest
     internal bool Pending => File.Exists(pendingPath);
 
     private static bool Valid(int percent) => percent > 100 && percent <= 200 && percent % 25 == 0;
-    private static string Payload(int percent) => "BMF-0.5.5 native-health " + percent.ToString(CultureInfo.InvariantCulture);
+    private static string Payload(int percent) => "BMF-0.5.6 native-health " + percent.ToString(CultureInfo.InvariantCulture);
 
     internal void Queue(int percent)
     {

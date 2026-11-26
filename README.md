@@ -1,6 +1,14 @@
-# Battlemarked Mod Framework (BMF) — v0.5.5-alpha
+# Battlemarked Mod Framework (BMF) — v0.5.6-alpha
 
-## New in v0.5.5 — verified one-shot health request
+## New in v0.5.6 — bounded party-wide native health trial
+
+The v0.5.5 test successfully claimed the activation request and verified the native maximum: 22 -> 28 HP at 125%, with current HP preserved at 22. Eight subsequent observations retained the raw/permanent/effective max; zero losses and zero errors. Healing above 22 HP and party-wide behavior were not tested. AP continued to work (four refunds, one reset, zero errors).
+
+This version extends the successful native trial to up to four distinct eligible heroes in a single local solo scope. The supplied generated Jade.GameModel assembly verifies Piece.get_characterSheetId signature 2000128490 and CharacterSheetId.get_Id signature 20000E, returning a string. Both the character-sheet ID and native health stat identity are reserved before a write. Neither ID nor pointer is printed. No second attempt for either identity, including replacement stat copies; no reapplication, even after loss. Initial full/unmodified baseline, exact-build/main-thread/local-solo scope, native verification, current HP preservation and same-object rollback remain required. A failed write stops health independently of AP. A lost maximum stops further writes. Once an attempt has occurred, scope departure permanently seals the party trial for that process. The framework cannot prove that a save is fresh; persistent changes may compound across separately armed launches.
+
+**Fresh disposable local solo adventures only.** Install v0.5.6, F10 > House rules > Hero health, select 125%, click Next launch request until SAVED and restart once. The request is version-specific; previous v0.5.5 markers are not reused. Start a new adventure, move each hero, heal above the original maximum if possible, take damage, complete rounds, then upload the three reports. Inspect Applied, Lost, Errors, each hero's baseline/target/lastMax/highestCurrent/aboveBaseline, and replacedStat. No direct healing or save restoration is provided. Discard the test adventure. The separate verified request mechanism and AP behavior are retained. Party-wide identity and gameplay behavior require runtime verification.
+
+## New in v0.5.5 — verified one-shot health request (historical)
 
 The v0.5.4 logs showed a request queued (`NextArmed=True`) at the end of one session, but the subsequent game launch reported `Armed=False`, `Consumed=False` and no health write. The exact reason the old config boolean did not survive startup is unknown. No evidence yet confirms or rejects the native health setter. AP remains unchanged (12 refunds, four resets, zero errors in the latest session).
 

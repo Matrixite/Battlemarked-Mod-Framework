@@ -150,3 +150,23 @@ try
 }
 finally { Directory.Delete(armDir, true); }
 Console.WriteLine("PASS: one-shot native health arm request lifecycle.");
+
+var party = new NativeHealthPartyTrial();
+Check(!party.EndScope() && !party.Ended, "startup scene changes do not consume an unused party trial");
+Check(party.Reserve("", new IntPtr(1), 16, 20, 16) == null, "missing sheet ID rejected");
+Check(party.Reserve("hero-A", IntPtr.Zero, 16, 20, 16) == null, "missing stat identity rejected");
+var heroA = party.Reserve("hero-A", new IntPtr(1), 16, 20, 16);
+Check(heroA != null && heroA.Id == 1 && heroA.Baseline == 16 && heroA.Target == 20, "first hero reserved at original baseline");
+Check(party.Find("hero-A") == heroA, "same logical hero found");
+Check(party.Reserve("hero-A", new IntPtr(2), 20, 25, 20) == null, "same sheet cannot stack on a replacement stat");
+Check(party.Reserve("hero-B", new IntPtr(1), 20, 25, 20) == null, "same native stat cannot scale under a different sheet");
+Check(party.Reserve("hero-B", new IntPtr(2), 12, 15, 12) != null, "second distinct hero can apply");
+Check(party.Reserve("hero-C", new IntPtr(3), 22, 28, 22) != null, "third hero allowed");
+Check(party.Reserve("hero-D", new IntPtr(4), 24, 30, 24) != null, "fourth hero allowed");
+Check(party.Reserve("hero-E", new IntPtr(5), 16, 20, 16) == null && party.Entries.Count == 4, "bounded four-hero trial");
+Check(party.EndScope() && party.Ended && !party.EndScope(), "first departure permanently seals trial");
+Check(party.Reserve("hero-F", new IntPtr(6), 16, 20, 16) == null, "new scope cannot renew trial");
+var earlyEnd = new NativeHealthPartyTrial();
+Check(earlyEnd.Reserve("hero-A", new IntPtr(1), 16, 20, 16) != null && earlyEnd.EndScope(), "departure seals a partially applied party");
+Check(earlyEnd.Reserve("hero-B", new IntPtr(2), 12, 15, 12) == null, "cannot extend to another adventure");
+Console.WriteLine("PASS: party health identity and lifecycle guards.");

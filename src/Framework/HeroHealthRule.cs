@@ -3,7 +3,7 @@ using BepInEx.Configuration;
 
 namespace Battlemarked.ModFramework;
 
-// One explicitly armed native-max trial. Caller verifies build, main thread and local solo hero.
+// Explicitly armed, bounded party health trial. Caller verifies build, main thread and local solo hero.
 // No repeated writes, no temporary modifiers, no getter patches. May persist in a disposable save.
 internal sealed class HeroHealthRule
 {
@@ -12,20 +12,26 @@ internal sealed class HeroHealthRule
     private readonly NativeHealthArmRequest armRequest;
     private string armRequestStatus = "Not checked";
     private readonly int percent;
-    private bool armed, consumed, ready, faulted, dirty = true;
-    private MethodInfo usesHealth, isDowned, stats, getObject, getStat, getMax, value, max, permanent, raw, modifiers, setMax, setValue;
+    private bool armed, writeHalted, ready, faulted, dirty = true;
+    private MethodInfo usesHealth, isDowned, sheet, sheetId, stats, getObject, getStat, getMax, value, max, permanent, raw, modifiers, setMax, setValue;
     private PropertyInfo pointer, count;
     private object healthType;
-    private IntPtr trialKey;
-    private int baseline, target, originalCurrent, observations, verifiedObservations, lost, errors, skipped;
-    private bool applied, rolledBack, rollbackFailed;
+    private readonly NativeHealthPartyTrial party = new();
+    private int errors, skipped, missingIdentity, rejectedReservations;
     private DateTime lastWrite;
     private readonly List<string> samples = new();
     internal int NextPercent => HealthBudget.Normalize(nextPercent.Value);
     internal bool NextArmed => armRequest.Pending;
     internal bool Available => ready;
-    internal string Status => !ready ? "Native health metadata unavailable" : faulted ? "Health trial stopped; see report" : applied ? $"Native trial: {baseline} -> {target} HP" : armed && !consumed ? $"Armed: {percent}% (one hero)" : NextArmed ? "Request saved; restart once" : "Read-only; arm for next launch";
-    internal string Counts => $"Verified: {verifiedObservations} | Lost: {lost} | Errors: {errors}";
+    private int Applied => party.Entries.Count(e => e.Applied);
+    private int Verified => party.Entries.Sum(e => e.Verified);
+    private int Lost => party.Entries.Sum(e => e.Lost);
+    internal string Status => !ready ? "Native health metadata unavailable" : faulted ? "Health trial stopped; see report" :
+        party.Ended ? $"Party trial ended: {Applied} applied" :
+        writeHalted ? $"Further writes stopped: {Applied} applied" :
+        armed ? $"Armed: {percent}% | {Applied}/{NativeHealthPartyTrial.Maximum} heroes applied" :
+        NextArmed ? "Request saved; restart once" : "Read-only; arm for next launch";
+    internal string Counts => $"Verified: {Verified} | Lost: {Lost} | Errors: {errors}";
     internal void ChangePercent(int delta)
     {
         if (!Available) return;
@@ -80,11 +86,8 @@ internal sealed class HeroHealthRule
     }
     internal void ClearScope()
     {
-        if (trialKey != IntPtr.Zero)
-        {
-            Sample("Trial scope ended; no restoration attempted on departed native objects. Discard test adventure.");
-            trialKey = IntPtr.Zero;
-        }
+        if (party.EndScope())
+            Sample("Party trial scope ended; no further writes or restoration on departed objects. Discard test adventure.");
         // The arm is never renewed by a scene change or teardown.
         dirty = true;
     }
@@ -103,7 +106,7 @@ internal sealed class HeroHealthRule
             "Experimental max health target 100/125/150/175/200%. Native maximum trial requires separate one-shot arm. Fresh disposable solo only.");
         // Retire the old boolean. It is not an authorization in this build.
         var legacyArm = ctx.Config.Bind("HouseRules", "ArmNativeHealth054", false,
-            "Retired v0.5.4 setting; ignored. Arm using the v0.5.5 House rules menu.");
+            "Retired v0.5.4 setting; ignored. Arm using the v0.5.6 House rules menu.");
         legacyArm.Value = false;
         ctx.Config.Save();
         percent = NextPercent;
@@ -128,6 +131,12 @@ internal sealed class HeroHealthRule
             if (Convert.ToInt32(healthType) != 2) throw new InvalidOperationException("Unexpected Health enum value");
             usesHealth = Exact(piece, "get_usesHealth", "200002");
             isDowned = Exact(piece, "get_IsDowned", "200002");
+            sheet = Exact(piece, "get_characterSheetId", "2000128490");
+            if (sheet.ReturnType.Name != "CharacterSheetId" || sheet.ReturnType.Assembly != piece.Assembly)
+                throw new InvalidOperationException("Unexpected character sheet identity type");
+            sheetId = Exact(sheet.ReturnType, "get_Id", "20000E");
+            if (sheetId.IsStatic || sheetId.ReturnType != typeof(string))
+                throw new InvalidOperationException("Unexpected character sheet ID getter");
             stats = Exact(piece, "get_stats", "2000128310");
             getObject = Exact(facade, "GetStatObject", "20011283041185C0");
             getStat = Exact(facade, "GetStat", "2001081185C0");
@@ -176,67 +185,111 @@ internal sealed class HeroHealthRule
     private bool MaxMatches(object facade, object stat, int expectedMax)
         => I(getMax, facade) == expectedMax && F(max, stat) == expectedMax &&
            F(permanent, stat) == expectedMax && F(raw, stat) == expectedMax && ModifierCount(stat) == 0;
+    // The game model exposes a string-valued CharacterSheetId.Id. Do not retain
+    // the wrapper or write the ID/pointer to logs. Reject both duplicate identities.
+    private string ReadSheetId(object piece)
+    {
+        var id = sheet.Invoke(piece, null);
+        return id == null ? null : sheetId.Invoke(id, null) as string;
+    }
+    private bool SameIdentity(object piece, object facade, string id, IntPtr key)
+    {
+        if (!string.Equals(ReadSheetId(piece), id, StringComparison.Ordinal) || !SameStat(facade, key)) return false;
+        var liveFacade = stats.Invoke(piece, null);
+        return liveFacade != null && SameStat(liveFacade, key);
+    }
     internal void Observe(object piece, bool allowWrite = true, string source = "AP")
     {
-        if (!ready || faulted) return;
+        if (!ready || faulted || !armed || party.Ended) return;
         try
         {
             if (usesHealth.Invoke(piece, null) is not true || isDowned.Invoke(piece, null) is not false) return;
+            string id = ReadSheetId(piece);
+            if (string.IsNullOrWhiteSpace(id)) { missingIdentity++; dirty = true; return; }
             var facade = stats.Invoke(piece, null);
             if (facade == null) return;
             var stat = getObject.Invoke(facade, new[] { healthType });
             if (stat == null) return;
             var key = (IntPtr)pointer.GetValue(stat);
             if (key == IntPtr.Zero) return;
-            if (consumed)
+            var existing = party.Find(id);
+            if (existing != null)
             {
-                if (!applied || trialKey == IntPtr.Zero || trialKey != key) return;
-                observations++;
-                int current = I(getStat, facade);
-                bool retained = MaxMatches(facade, stat, target) && current >= 0 && current <= target && F(value, stat) == current;
-                if (retained) verifiedObservations++; else lost++;
-                Sample($"trial observed source={source} retained={retained} | {Snapshot(facade, stat)}");
+                // Multiple native copies may represent the same logical hero.
+                // Do not scale or restore any replacement object.
+                if (existing.StatKey != key)
+                {
+                    existing.ReplacedStat++;
+                    if (existing.ReplacedStat == 1) Sample($"hero#{existing.Id}: different native health object; no additional write");
+                    dirty = true;
+                    return;
+                }
+                if (!existing.Applied) return;
+                existing.Observations++;
+                int current = I(getStat, facade), currentMax = I(getMax, facade);
+                existing.LastCurrent = current; existing.LastMax = currentMax;
+                bool retained = SameIdentity(piece, facade, id, key) && MaxMatches(facade, stat, existing.Target)
+                    && current >= 0 && current <= existing.Target && F(value, stat) == current;
+                if (retained)
+                {
+                    existing.Verified++;
+                    existing.HighestCurrent = Math.Max(existing.HighestCurrent, current);
+                    if (current > existing.Baseline) existing.AboveBaseline++;
+                }
+                else
+                {
+                    existing.Lost++;
+                    writeHalted = true; // keep observing, but do not expand an unstable trial
+                }
+                Sample($"hero#{existing.Id} observed source={source} retained={retained} | {Snapshot(facade, stat)}");
                 return;
             }
-            if (!armed || !allowWrite || percent == 100) return;
+            if (writeHalted || !allowWrite || percent == 100) return;
             int initial = I(getStat, facade), nativeMax = I(getMax, facade);
             if (!HealthBudget.CanNativeTrial(percent, initial, nativeMax, F(value, stat), F(max, stat), F(permanent, stat), F(raw, stat), ModifierCount(stat)))
             { skipped++; dirty = true; return; }
-            // Reserve the one attempt before entering native code. Never scale a second object.
-            consumed = true; trialKey = key; baseline = nativeMax; originalCurrent = initial;
-            target = HealthBudget.Target(baseline, percent);
-            Sample($"native trial target={target} | before {Snapshot(facade, stat)}");
+            int target = HealthBudget.Target(nativeMax, percent);
+            var trial = party.Reserve(id, key, nativeMax, target, initial);
+            if (trial == null) { rejectedReservations++; dirty = true; return; }
+            int baseline = trial.Baseline;
+            Sample($"hero#{trial.Id} native trial target={target} | before {Snapshot(facade, stat)}");
+            bool writeAttempted = false;
             try
             {
-                if (!SameStat(facade, key) || !Matches(facade, stat, initial, baseline))
+                if (!SameIdentity(piece, facade, id, key) || !Matches(facade, stat, initial, baseline))
                     throw new InvalidOperationException("Native health identity or baseline changed");
+                writeAttempted = true;
                 bool wrote = setMax.Invoke(facade, new object[] { healthType, (float)target }) is true;
-                if (!wrote || !SameStat(facade, key) || !MaxMatches(facade, stat, target))
+                if (!wrote || !SameIdentity(piece, facade, id, key) || !MaxMatches(facade, stat, target))
                     throw new InvalidOperationException("Native maximum not verified");
                 // Preserve pre-write HP if the native maximum setter changed it.
                 if (I(getStat, facade) != initial && setValue.Invoke(facade, new object[] { healthType, (float)initial }) is not true)
                     throw new InvalidOperationException("Current HP preservation failed");
-                if (!SameStat(facade, key) || !Matches(facade, stat, initial, target))
+                if (!SameIdentity(piece, facade, id, key) || !Matches(facade, stat, initial, target))
                     throw new InvalidOperationException("Native health trial verification failed");
-                applied = true;
-                Sample($"native trial verified=True | after {Snapshot(facade, stat)}");
+                trial.Applied = true; trial.LastMax = target;
+                Sample($"hero#{trial.Id} native trial verified=True | after {Snapshot(facade, stat)}");
             }
             catch (Exception ex)
             {
-                try
+                if (writeAttempted)
                 {
-                    // Roll back only the same object with no other modifiers. No blind retries.
-                    if (!SameStat(facade, key) || ModifierCount(stat) != 0)
-                        throw new InvalidOperationException("Rollback identity/baseline unavailable");
-                    bool maxOk = Matches(facade, stat, initial, baseline) ||
-                        setMax.Invoke(facade, new object[] { healthType, (float)baseline }) is true;
-                    bool hpOk = I(getStat, facade) == initial ||
-                        setValue.Invoke(facade, new object[] { healthType, (float)initial }) is true;
-                    rolledBack = maxOk && hpOk && SameStat(facade, key) && Matches(facade, stat, initial, baseline);
-                    rollbackFailed = !rolledBack;
-                    Sample($"native trial rollback verified={rolledBack} | {Snapshot(facade, stat)}");
+                    try
+                    {
+                        // Roll back only the same hero and native object with no other modifiers.
+                        if (!SameIdentity(piece, facade, id, key) || ModifierCount(stat) != 0)
+                            throw new InvalidOperationException("Rollback identity/baseline unavailable");
+                        bool maxOk = Matches(facade, stat, initial, baseline) ||
+                            setMax.Invoke(facade, new object[] { healthType, (float)baseline }) is true;
+                        if (!SameIdentity(piece, facade, id, key)) throw new InvalidOperationException("Rollback identity changed");
+                        bool hpOk = I(getStat, facade) == initial ||
+                            setValue.Invoke(facade, new object[] { healthType, (float)initial }) is true;
+                        trial.RolledBack = maxOk && hpOk && SameIdentity(piece, facade, id, key) && Matches(facade, stat, initial, baseline);
+                        trial.RollbackFailed = !trial.RolledBack;
+                        Sample($"hero#{trial.Id} native trial rollback verified={trial.RolledBack} | {Snapshot(facade, stat)}");
+                    }
+                    catch (Exception rollback) { trial.RollbackFailed = true; Sample("Rollback unverified: " + rollback.Message); }
                 }
-                catch (Exception rollback) { rollbackFailed = true; Sample("Rollback unverified: " + rollback.Message); }
                 Stop("native trial", ex);
             }
         }
@@ -258,12 +311,14 @@ internal sealed class HeroHealthRule
     {
         try
         {
-            var lines = new List<string> { "BMF hero maximum health probe (one-shot native maximum trial)",
+            var lines = new List<string> { "BMF hero maximum health probe (bounded party native maximum trial)",
                 "Framework=" + Framework.Version, "GameVersion=" + ctx.GameVersion, "GameAssemblySHA256=" + ctx.GameAssemblySha256,
                 "UTC=" + DateTime.UtcNow.ToString("O"), "Status=" + Status,
-                $"ConfiguredPercent={percent} NextPercent={NextPercent} Armed={armed} NextArmed={NextArmed} Consumed={consumed} Applied={applied} Baseline={baseline} Target={target} OriginalCurrent={originalCurrent} Observations={observations} VerifiedObservations={verifiedObservations} Lost={lost} Skipped={skipped} RolledBack={rolledBack} RollbackFailed={rollbackFailed} Errors={errors}",
+                $"ConfiguredPercent={percent} NextPercent={NextPercent} Armed={armed} NextArmed={NextArmed} ScopeEnded={party.Ended} WritesHalted={writeHalted} Attempts={party.Entries.Count} Applied={Applied} Observations={party.Entries.Sum(e => e.Observations)} VerifiedObservations={Verified} Lost={Lost} Skipped={skipped} MissingIdentity={missingIdentity} RejectedReservations={rejectedReservations} Errors={errors}",
                 "ArmRequest=" + armRequestStatus,
-                "One native health stat object only; no raw pointers. Native maximum may persist. Discard test adventure." };
+                "Up to four unique character-sheet IDs and native health objects; IDs/pointers not logged. Native maximum may persist. Discard test adventure." };
+            foreach (var e in party.Entries.OrderBy(e => e.Id))
+                lines.Add($"hero#{e.Id} applied={e.Applied} baseline={e.Baseline} target={e.Target} originalCurrent={e.OriginalCurrent} lastCurrent={e.LastCurrent} lastMax={e.LastMax} highestCurrent={e.HighestCurrent} observations={e.Observations} verified={e.Verified} lost={e.Lost} aboveBaseline={e.AboveBaseline} replacedStat={e.ReplacedStat} rolledBack={e.RolledBack} rollbackFailed={e.RollbackFailed}");
             lines.AddRange(samples);
             File.WriteAllLines(Path.Combine(ctx.DataDirectory, "hero-health-probe.txt"), lines);
             lastWrite = DateTime.UtcNow; dirty = false;
