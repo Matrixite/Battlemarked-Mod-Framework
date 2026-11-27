@@ -13,7 +13,7 @@ internal sealed class NativeDebugMenu
     private readonly Plugin plugin;
     private readonly ManualLogSource log;
     private Component owned;
-    private MethodInfo show, hide;
+    private MethodInfo show, hide, getFacade, getTools, castNoop;
     private Type menuType;
     private MethodInfo cast;
     internal string Status { get; private set; } = "Debug menu off. Select Show to look for the native menu.";
@@ -24,27 +24,35 @@ internal sealed class NativeDebugMenu
     private void Bind()
     {
         if (menuType != null) return;
-        var type = Assembly.Load(new AssemblyName("Jade.DebugMenu")).GetType("Jade.DebugMenu.DebugMenu", true);
+        var assembly = Assembly.Load(new AssemblyName("Jade.DebugMenu"));
+        var type = assembly.GetType("Jade.DebugMenu.DebugMenu", true);
         if (!typeof(Component).IsAssignableFrom(type))
             throw new InvalidOperationException("Unexpected native debug menu type.");
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
-        MethodInfo Find(string name)
+        MethodInfo Find(string name, bool returnsValue = false)
         {
             var methods = type.GetMethods(flags).Where(m => m.Name == name &&
-                !m.IsAbstract && !m.ContainsGenericParameters && m.ReturnType == typeof(void) &&
+                !m.IsAbstract && !m.ContainsGenericParameters && (m.ReturnType != typeof(void)) == returnsValue &&
                 m.GetParameters().Length == 0).ToArray();
             if (methods.Length != 1) throw new InvalidOperationException("Missing or ambiguous " + name);
             return methods[0];
         }
         var nativeShow = Find("ShowDebugMenu");
         var nativeHide = Find("HideDebugMenu");
-        var nativeCast = typeof(Il2CppObjectBase).GetMethods(BindingFlags.Public | BindingFlags.Instance)
+        var nativeGetFacade = Find("get_FidelityDebugMenu", returnsValue: true);
+        var nativeGetTools = Find("get_DebugTools", returnsValue: true);
+        var nopType = assembly.GetType("Jade.DebugMenu.NopFidelityDebugMenuFacadeImpl", true);
+        var castDefinition = typeof(Il2CppObjectBase).GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Single(m => m.Name == "TryCast" && m.IsGenericMethodDefinition &&
-                m.GetGenericArguments().Length == 1 && m.GetParameters().Length == 0)
-            .MakeGenericMethod(type);
+                m.GetGenericArguments().Length == 1 && m.GetParameters().Length == 0);
+        var nativeCast = castDefinition.MakeGenericMethod(type);
+        var nativeCastNoop = castDefinition.MakeGenericMethod(nopType);
         show = nativeShow;
         hide = nativeHide;
         cast = nativeCast;
+        castNoop = nativeCastNoop;
+        getFacade = nativeGetFacade;
+        getTools = nativeGetTools;
         menuType = type;
     }
 
@@ -68,6 +76,29 @@ internal sealed class NativeDebugMenu
         return matches[0];
     }
 
+    // The verified retail initializer explicitly installs the no-op facade
+    // and does not initialize DebugTools. Activating its GameObject alone
+    // would only expose an empty container, not a usable developer UI.
+    private bool HasUsableNativeTools(Component menu)
+    {
+        var facade = getFacade.Invoke(menu, null) as Il2CppObjectBase;
+        bool noop = facade != null && castNoop.Invoke(facade, null) != null;
+        var tools = getTools.Invoke(menu, null);
+        log.LogInfo("BMF native debug readiness: facadePresent=" + (facade != null) +
+            " nopFacade=" + noop + " debugToolsPresent=" + (tools != null));
+        if (noop)
+        {
+            Status = "Native debug tools disabled in this retail build.";
+            return false;
+        }
+        if (facade == null || tools == null)
+        {
+            Status = "Native debug interface is not initialized.";
+            return false;
+        }
+        return true;
+    }
+
     internal bool SetVisible(bool visible)
     {
         // These methods and their compiled implementations were checked against
@@ -81,6 +112,7 @@ internal sealed class NativeDebugMenu
         {
             Bind();
             var menu = FindMenu();
+            if (visible && !HasUsableNativeTools(menu)) return false;
             var root = menu.gameObject;
             if (visible)
             {

@@ -27,5 +27,15 @@ class DevToolsSourceTests(unittest.TestCase):
         self.assertNotIn('AddComponent', bridge)
         self.assertNotIn('Instantiate(', bridge)
 
+    def test_retail_stub_guard_precedes_native_show(self):
+        bridge = (SRC / "NativeDebugMenu.cs").read_text()
+        self.assertIn('"get_FidelityDebugMenu"', bridge)
+        self.assertIn('"get_DebugTools"', bridge)
+        self.assertIn('"Jade.DebugMenu.NopFidelityDebugMenuFacadeImpl"', bridge)
+        self.assertIn('if (visible && !HasUsableNativeTools(menu)) return false;', bridge)
+        self.assertLess(bridge.index('if (visible && !HasUsableNativeTools(menu)) return false;'),
+                        bridge.index('show.Invoke(menu, null)'))
+        self.assertIn('Native debug tools disabled in this retail build.', bridge)
+
 if __name__ == "__main__":
     unittest.main()

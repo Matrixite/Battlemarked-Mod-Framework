@@ -310,7 +310,7 @@ internal sealed class ModMenu
             {
                 Label(97, "Dev Tools | experimental native game debug menu");
                 Label(128, "Use only in a disposable local solo game. Back up saves first.");
-                Label(159, "The native menu can contain commands that change game state.");
+                Label(159, "Retail builds may include only an empty debug-menu shell.");
                 if (!plugin.VerifiedGame) { Label(190, "Unavailable: unverified game build."); return; }
                 if (developerMode.Value && Button(193, "Show game debug menu"))
                 {
@@ -320,7 +320,7 @@ internal sealed class ModMenu
                     nativeDebugMenu.SetVisible(false);
                 Label(267, "Press F10 to return to the mod manager.");
                 Label(298, "Opening is session-only; no debug setting is saved.");
-                Label(329, "Status:");
+                Label(329, "Status (details in BepInEx log):");
                 Label(355, nativeDebugMenu.Status);
                 return;
             }

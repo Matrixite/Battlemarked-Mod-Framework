@@ -1,8 +1,12 @@
-# v0.6.14-alpha validation
+# v0.6.15-alpha validation
 
 ## First stable release automation
 
 The 12 Python release-gate and simulated publication tests pass locally. These cover the current alpha skip, exact stable-version eligibility, inconsistent version rejection, wrong branch refusal, mismatched tag refusal, versioned source archive and matching SHA-256 checksum, and repeated-run protection. The publication tests use a temporary local Git remote and mock GitHub CLI; they do not create a real release. The hosted workflow is configured to run the .NET 8 core tests before publication; dotnet and the Windows game environment are unavailable here. Real GitHub Actions execution and Windows/gameplay acceptance remain unverified. No framework version, gameplay behavior or updater code changes are included in this automation.
+
+## v0.6.15 native menu retail restriction
+
+Static inspection of the supplied verified GameAssembly shows Jade.DebugMenu.DebugMenu.Initialize allocates NopFidelityDebugMenuFacadeImpl, hides the root, and does not initialize DebugTools. The compiled GameDesignDebugUIMenu.get_IsEnabled returns false and set_IsEnabled is a return-only stub. The new runtime readiness guard must reject an uninitialized/no-op facade before calling ShowDebugMenu. Source regression tests cover the ordering and diagnostic message. Windows compilation and runtime verification are still pending. Acceptance: press Show game debug menu in Dev Tools; the retail limitation (or a precise missing-object/binding reason) should be shown without closing BMF. Confirm no new exception in BepInEx log.
 
 ## v0.6.14 Dev Tools (experimental)
 

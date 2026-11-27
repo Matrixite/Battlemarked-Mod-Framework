@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.14-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.15-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,10 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.15 — native debug menu retail-build detection
+
+The verified retail build initializes the native menu with `NopFidelityDebugMenuFacadeImpl` instead of the actual developer interface. The separate Game Design UI's enable getter returns false and its setter does nothing. BMF now checks the native facade and DebugTools instance before opening, so an empty container no longer causes the mod manager to close. The Dev Tools status reports the restriction or missing initialization, with readiness details in the BepInEx log. This is detection, not a restoration of developer features that the retail build disables.
 
 ## v0.6.14 — experimental Dev Tools tab
 
