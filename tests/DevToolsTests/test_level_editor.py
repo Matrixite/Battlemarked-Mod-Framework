@@ -68,6 +68,30 @@ class LevelEditorTests(unittest.TestCase):
         for flag in ('isPlayerControlled', 'isDownable', 'isPOI', 'usesHealth', 'isCreatureNonNpc', 'isAttackableProp'):
             self.assertIn('"' + flag + '"', editor)
 
+    def test_send_uses_native_checked_request_cast_not_clr_interface_assignability(self):
+        # 0.6.22 log: the real local room was already proved, but the
+        # native interface wrapper was not CLR-assignable from RequestSpawnPiece.
+        editor = (SRC / "LevelEditor.cs").read_text()
+        for start, end in [('private void Spawn(', 'private static void RequireMapIdle'),
+                           ('private void Remove(', 'internal bool DrawMapTool()')]:
+            action = editor[editor.index(start):editor.index(end)]
+            self.assertNotIn('requestType.IsAssignableFrom', action)
+            self.assertIn('CheckedRequest(', action)
+            self.assertLess(action.index('CheckedRequest('), action.index('send.Invoke'))
+        self.assertIn('FindCast(requestType).Invoke', editor)
+        self.assertIn('cast.Pointer != native.Pointer', editor)
+
+    def test_removal_accepts_missing_optional_physical_armor(self):
+        # User's 0.6.22 log: GetStat(PhysicalArmor) threw for an unarmored enemy.
+        editor = (SRC / "LevelEditor.cs").read_text()
+        request = editor[editor.index('private static object MakeRemovalRequest'):editor.index('private void Remove(')]
+        self.assertNotIn('get.Invoke(stats, new[] { Enum.Parse(statType, "PhysicalArmor") })', request)
+        self.assertIn('"TryGetStat"', request)
+        self.assertIn('typeof(int).MakeByRefType()', request)
+        self.assertIn('armorArgs', request)
+        self.assertIn('armorFound', request)
+        self.assertIn('!armorFound && armor != 0', request)
+
     def test_board_snapshot_and_single_request(self):
         editor = (SRC / "LevelEditor.cs").read_text()
         self.assertIn('WindowSize = 8', editor)

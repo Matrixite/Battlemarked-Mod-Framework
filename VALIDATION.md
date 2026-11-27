@@ -1,8 +1,12 @@
-# v0.6.22-alpha validation
+# v0.6.23-alpha validation
 
 ## First stable release automation
 
 The 12 Python release-gate and simulated publication tests pass locally. These cover the current alpha skip, exact stable-version eligibility, inconsistent version rejection, wrong branch refusal, mismatched tag refusal, versioned source archive and matching SHA-256 checksum, and repeated-run protection. The publication tests use a temporary local Git remote and mock GitHub CLI; they do not create a real release. The hosted workflow is configured to run the .NET 8 core tests before publication; dotnet and the Windows game environment are unavailable here. Real GitHub Actions execution and Windows/gameplay acceptance remain unverified. No framework version, gameplay behavior or updater code changes are included in this automation.
+
+## v0.6.23 captured direct-map failures
+
+User-provided BepInEx log from v0.6.22 shows successful loading, 162 eligible enemies / 463 scanned, followed by removal failing at StatsFacade.GetStat(PhysicalArmor) because the target has no such stat, and placement failing at the local request type check. The latter is after verified local room and tile validation; the native metadata interface table confirms both RequestSpawnPiece and RequestTryDealDamageToPiece implement native IRequest (type index 39925). Replace CLR IsAssignableFrom with a native TryCast and require the expected wrapper and equal native pointer; distinguish missing local room from request cast failures. The exact native TryGetStat(Type, out int, int) overload allows the optional armor stat to be absent with a zero default; reject unrelated read errors. The two regression checks fail against 0.6.22 and pass after the changes; all 31 Python source/release tests pass. Windows build and actual native request delivery remain unverified from this environment. Acceptance: update, enter disposable solo, select free tile and spawn, check actual piece appears; select eligible unarmored and armored enemies/props, confirm removal and observe result. Check BepInEx logs for the next precise failure if any.
 
 ## v0.6.22 direct map tools
 

@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.22-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.23-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,10 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.23 — direct map request and missing armour fixes
+
+The user's v0.6.22 runtime log confirms 162 registered eligible enemies, successful map targeting, and two pre-dispatch failures: `Native local spawn request unavailable` and `Stat of type PhysicalArmor couldn't be found`. Both spawn and removal now use a native checked `TryCast<IRequest>` on the constructed request rather than relying on CLR wrapper interface assignability. The verified native metadata lists IRequest on both concrete request types. The cast must return the same nonzero native pointer with the expected interface wrapper type. For removal, native StatsFacade.TryGetStat(Type, out int, int defaultValue) reads optional PhysicalArmor with zero as the missing-stat default; required Health and bounded damage validation remain intact. Scope and target protections are unchanged. Both fixes have failing-before/passing-after source regression checks; native dispatch and results still require Windows gameplay confirmation.
 
 ## v0.6.22 — direct 3D board placement and removal
 

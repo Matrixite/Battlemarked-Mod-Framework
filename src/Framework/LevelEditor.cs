@@ -462,6 +462,19 @@ internal sealed class LevelEditor
         return ctor.Invoke(args);
     }
 
+    // Generated interop classes can implement a native IL2CPP interface
+    // without implementing the corresponding CLR wrapper type. Validate with
+    // the same native checked cast used for current room and asset proof.
+    private static object CheckedRequest(object message, Type messageType, Type requestType)
+    {
+        if (!messageType.IsInstanceOfType(message) || message is not Il2CppObjectBase native || native.Pointer == IntPtr.Zero)
+            throw new InvalidOperationException("Native request construction failed: " + messageType.Name);
+        var cast = FindCast(requestType).Invoke(native, null) as Il2CppObjectBase;
+        if (cast == null || cast.Pointer != native.Pointer || !requestType.IsInstanceOfType(cast))
+            throw new InvalidOperationException("Native IRequest cast failed: " + messageType.Name);
+        return cast;
+    }
+
     private void Spawn(SpawnCommand command)
     {
         if (!plugin.VerifiedGame) throw new InvalidOperationException("Spawn rejected: unverified build.");
@@ -485,11 +498,12 @@ internal sealed class LevelEditor
         var roomType = Load("Jade.Networking", "Jade.Networking.LocalNetworkRoom");
         var requestType = Load("Jade.Messaging", "Jade.Messaging.IRequest");
         var messageType = Load("Jade.Messaging", "Jade.Messaging.RequestSpawnPiece");
-        if (!roomType.IsInstanceOfType(live.Room) || !requestType.IsAssignableFrom(messageType))
-            throw new InvalidOperationException("Native local spawn request unavailable.");
+        if (!roomType.IsInstanceOfType(live.Room))
+            throw new InvalidOperationException("Native local spawn room type unavailable.");
         var send = Require(roomType, "Send", false, typeof(void), requestType);
         var data = MakeSpawnData(id, point, team);
-        var request = Constructor(messageType, ModelType("SpawnData")).Invoke(new[] { data });
+        var message = Constructor(messageType, ModelType("SpawnData")).Invoke(new[] { data });
+        var request = CheckedRequest(message, messageType, requestType);
         if (Call(live.Room, "get_HasRequestsInQueue") is not bool busy || busy)
             throw new InvalidOperationException("Local room busy; refresh and retry manually.");
         // Recheck the live scope immediately before dispatch. Do not call the
@@ -667,7 +681,14 @@ internal sealed class LevelEditor
             throw new InvalidOperationException("Native piece stats unavailable.");
         var get = Require(statsType, "GetStat", false, typeof(int), statType);
         int hp = (int)get.Invoke(stats, new[] { Enum.Parse(statType, "Health") });
-        int armor = (int)get.Invoke(stats, new[] { Enum.Parse(statType, "PhysicalArmor") });
+        // Not every native piece defines PhysicalArmor. GetStat throws for
+        // those pieces; the verified TryGetStat(Type, out int, int) overload
+        // explicitly provides a default value when that stat is absent.
+        var tryGet = Require(statsType, "TryGetStat", false, typeof(bool), statType, typeof(int).MakeByRefType(), typeof(int));
+        var armorArgs = new object[] { Enum.Parse(statType, "PhysicalArmor"), 0, 0 };
+        if (tryGet.Invoke(stats, armorArgs) is not bool armorFound || armorArgs[1] is not int armor ||
+            (!armorFound && armor != 0))
+            throw new InvalidOperationException("Physical armour read failed.");
         if (hp <= 0 || hp > 10000 || armor < 0 || armor > 10000)
             throw new InvalidOperationException("Piece health or armor outside supported removal range.");
         int damage = checked(hp + armor + 1);
@@ -702,12 +723,13 @@ internal sealed class LevelEditor
         if (!command.Target.SamePiece(target)) throw new InvalidOperationException("Selected piece moved or changed.");
         if (!HouseRules.TryGetLevelEditorPicker(live, out var handler, out reason)) throw new InvalidOperationException(reason);
         RequireMapIdle(handler);
-        var request = MakeRemovalRequest(target, PhysicalDamageId(live, handler));
+        var nativeMessage = MakeRemovalRequest(target, PhysicalDamageId(live, handler));
         var message = Load("Jade.Messaging", "Jade.Messaging.RequestTryDealDamageToPiece");
         var roomType = Load("Jade.Networking", "Jade.Networking.LocalNetworkRoom");
         var requestType = Load("Jade.Messaging", "Jade.Messaging.IRequest");
-        if (!roomType.IsInstanceOfType(live.Room) || !requestType.IsAssignableFrom(message) || !message.IsInstanceOfType(request))
-            throw new InvalidOperationException("Native local removal request unavailable.");
+        if (!roomType.IsInstanceOfType(live.Room))
+            throw new InvalidOperationException("Native local removal room type unavailable.");
+        var request = CheckedRequest(nativeMessage, message, requestType);
         var send = Require(roomType, "Send", false, typeof(void), requestType);
         if (Call(live.Room, "get_HasRequestsInQueue") is not bool busy || busy)
             throw new InvalidOperationException("Local room busy; select again after it becomes idle.");
