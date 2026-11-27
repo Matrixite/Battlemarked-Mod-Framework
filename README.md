@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.21-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.22-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,14 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.22 — direct 3D board placement and removal
+
+In the Level Editor, refresh the board, select a registered enemy and press **Place on map**. The full manager is replaced by a compact toolbar at the top of the screen. Middle-click a visible free tile on the actual 3D game board; the game camera and native desktop board picker resolve the tile, including elevation. Check the selection and press **Confirm placement**. After a submitted request, select another tile to place another copy of the same enemy. The original grid placement is still available.
+
+For removal, press **Remove on map**, middle-click an occupied tile and press **Confirm removal (damage)**. This sends the game's single-target native physical damage request for the selected hostile creature or attackable prop, with observed HP and physical armour used to calculate bounded damage. The game decides the actual result; ordinary death/destruction, loot and encounter effects may apply, and immunity or scripts may prevent removal. This is not a generic scene-object deletion or guaranteed despawn. Heroes, player-controlled/downable pieces, NPCs, POIs and non-destructible scenery are excluded. Press **Back to editor / cancel** or F10 to leave targeting; pending requests/selection are cleared. No automatic repeat, direct object destruction or multiplayer writes. Use disposable solo campaigns.
+
+The desktop picker is captured on its live Tick, not a constructor; exact HUD state, board, room and freshness are checked before selection/dispatch. Game-action processing, active grab and room-queue checks reject busy states. Source regressions pass; Windows compilation, native targeting, enemy spawn and damage/removal behavior require in-game acceptance.
 
 ## v0.6.21 — level editor enemy list correction
 

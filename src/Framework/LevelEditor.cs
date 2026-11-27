@@ -27,6 +27,12 @@ internal sealed class LevelEditor
     private TileCell selectedTile;
     private Enemy selectedEnemy;
     private SpawnCommand pending;
+    private RemovalCommand pendingRemoval;
+    private RemovalTarget removalTarget;
+    // 0 = full editor, 1 = enemy placement, 2 = piece removal.
+    private int mapMode;
+    private bool mapPickRequested;
+    private float mapClickX, mapClickY;
 
     internal sealed class Context
     {
@@ -66,6 +72,24 @@ internal sealed class LevelEditor
         internal SpawnCommand(Context snapshot, TileCell tile, Enemy enemy) { Snapshot = snapshot; Tile = tile; Enemy = enemy; }
     }
 
+    private sealed class RemovalTarget
+    {
+        internal readonly Il2CppObjectBase Piece;
+        internal readonly int Id;
+        internal readonly string TypeKey;
+        internal readonly TileCell Tile;
+        internal RemovalTarget(Il2CppObjectBase piece, int id, string typeKey, TileCell tile)
+        { Piece = piece; Id = id; TypeKey = typeKey; Tile = tile; }
+        internal bool SamePiece(RemovalTarget other) => other != null && Id == other.Id &&
+            TypeKey == other.TypeKey && Piece.Pointer != IntPtr.Zero && Piece.Pointer == other.Piece.Pointer;
+    }
+    private sealed class RemovalCommand
+    {
+        internal readonly Context Snapshot;
+        internal readonly RemovalTarget Target;
+        internal RemovalCommand(Context snapshot, RemovalTarget target) { Snapshot = snapshot; Target = target; }
+    }
+
     internal LevelEditor(Plugin plugin, ManualLogSource log) { this.plugin = plugin; this.log = log; }
 
     private void Clear()
@@ -73,6 +97,7 @@ internal sealed class LevelEditor
         snapshot = null;
         cells = new TileCell[WindowSize, WindowSize];
         selectedTile = null; selectedEnemy = null; pending = null;
+        pendingRemoval = null; removalTarget = null; mapMode = 0; mapPickRequested = false;
         enemies.Clear(); matches.Clear();
         confirming = refresh = pan = false;
         panX = panY = enemyPage = 0;
@@ -100,10 +125,18 @@ internal sealed class LevelEditor
                 refresh = true;
             }
             var command = pending;
+            var remove = pendingRemoval;
             pending = null; // Never retry a submitted or rejected command.
-            if (command != null)
+            pendingRemoval = null;
+            if (command != null) { Spawn(command); return; }
+            if (remove != null) { Remove(remove); return; }
+            if (mapMode != 0)
             {
-                Spawn(command);
+                if (mapPickRequested)
+                {
+                    mapPickRequested = false;
+                    PickMapTile();
+                }
                 return;
             }
             if (refresh || pan)
@@ -176,6 +209,12 @@ internal sealed class LevelEditor
                 null, new[] { BoardType, PointType, ModelType("PieceId") }, null);
         }
         internal object Point(int x, int y) => pointCtor.Invoke(new object[] { x, y });
+        internal Il2CppObjectBase PieceAt(object point)
+        {
+            var args = new[] { Board, point, (object)null };
+            if (occupied.Invoke(null, args) is not bool found || !found) return null;
+            return args[2] as Il2CppObjectBase;
+        }
         internal TileCell Read(int x, int y)
         {
             if (x < MinX || y < MinY || (long)x >= (long)MinX + SizeX || (long)y >= (long)MinY + SizeY ||
@@ -429,6 +468,12 @@ internal sealed class LevelEditor
         if (!HouseRules.TryGetLevelEditorContext(out var live, out var reason))
             throw new InvalidOperationException("Spawn rejected: " + reason);
         if (!command.Snapshot.SameSession(live)) throw new InvalidOperationException("Session changed. Refresh.");
+        if (mapMode == 1)
+        {
+            if (!HouseRules.TryGetLevelEditorPicker(live, out var handler, out reason))
+                throw new InvalidOperationException(reason);
+            RequireMapIdle(handler);
+        }
         var board = new BoardReader(live);
         var tile = board.Read(command.Tile.X, command.Tile.Y);
         var point = board.Point(tile.X, tile.Y);
@@ -453,9 +498,276 @@ internal sealed class LevelEditor
             throw new InvalidOperationException("Session changed before dispatch: " + reason);
         send.Invoke(live.Room, new[] { request });
         log.LogInfo("BMF level editor enemy request submitted: " + command.Enemy.Name + " at " + tile.X + "," + tile.Y);
-        selectedTile = null; selectedEnemy = null; confirming = false;
-        cells = new TileCell[WindowSize, WindowSize]; snapshot = null;
-        status = "Enemy request submitted. Check the game, then Refresh.";
+        selectedTile = null; confirming = false;
+        if (mapMode == 1)
+        {
+            snapshot = live;
+            status = "Enemy request submitted. Check the game; middle-click another tile.";
+        }
+        else
+        {
+            selectedEnemy = null;
+            cells = new TileCell[WindowSize, WindowSize]; snapshot = null;
+            status = "Enemy request submitted. Check the game, then Refresh.";
+        }
+    }
+
+    private static void RequireMapIdle(object handler)
+    {
+        var signal = Get(handler, "requestProcessingSignalReader");
+        if (Call(signal, "get_IsProcessingRequests") is not bool processing || processing)
+            throw new InvalidOperationException("Game is processing an action; wait and try again.");
+        if (Call(handler, "get_IsGrabbingWithPointer") is not bool grabbing || grabbing)
+            throw new InvalidOperationException("Release the currently grabbed piece first.");
+    }
+
+    private void BeginMapTool(int mode)
+    {
+        if (snapshot == null || (mode == 1 && selectedEnemy == null)) return;
+        mapMode = mode;
+        selectedTile = null; removalTarget = null; confirming = false;
+        pending = null; pendingRemoval = null; mapPickRequested = false; refresh = pan = false;
+        status = mode == 1 ? "Middle-click a free tile on the 3D board." : "Middle-click an enemy or destructible prop.";
+    }
+
+    private void EndMapTool()
+    {
+        mapMode = 0; mapPickRequested = false;
+        pending = null; pendingRemoval = null; removalTarget = null;
+        selectedTile = null; confirming = false;
+        refresh = true; pan = false;
+    }
+
+    // Pick using the currently ticking game input handler and actual active
+    // game camera. Coordinates are obtained by the native board hit-test, not
+    // guessed from a horizontal world plane (which fails on elevated tiles).
+    private void PickMapTile()
+    {
+        selectedTile = null;
+        removalTarget = null;
+        try
+        {
+            if (!HouseRules.TryGetLevelEditorContext(out var live, out var reason))
+                throw new InvalidOperationException(reason);
+            if (snapshot == null || !snapshot.SameSession(live))
+                throw new InvalidOperationException("Campaign changed; return to editor and refresh.");
+            if (!HouseRules.TryGetLevelEditorPicker(live, out var handler, out reason))
+                throw new InvalidOperationException(reason);
+            RequireMapIdle(handler);
+            var cameraRoot = Call(Get(handler, "cameraControlModel"), "get_ActiveCamera");
+            if (Call(cameraRoot, "get_Camera") is not Camera camera || camera == null || !camera.isActiveAndEnabled)
+                throw new InvalidOperationException("Active game camera unavailable.");
+            var pixel = new Vector2(mapClickX, Screen.height - mapClickY);
+            if (!camera.pixelRect.Contains(pixel))
+                throw new InvalidOperationException("Click inside the active game viewport.");
+            var ray = camera.ScreenPointToRay(new Vector3(pixel.x, pixel.y, 0f));
+            var hover = ModelType("TileSetHelpers+TileHoverData");
+            var hit = handler.GetType().GetMethod("TryGetHoveredTile",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                null, new[] { typeof(Ray), hover.MakeByRefType() }, null);
+            if (hit == null || hit.ReturnType != typeof(bool) || hit.IsAbstract || hit.ContainsGenericParameters)
+                throw new InvalidOperationException("Exact native board hit-test unavailable.");
+            var args = new object[] { ray, null };
+            if (hit.Invoke(handler, args) is not bool found || !found || args[1] == null ||
+                Call(args[1], "get_IsValid") is not bool valid || !valid)
+                throw new InvalidOperationException("No board tile hit. Middle-click a visible tile.");
+            var point = Get(args[1], "tilePoint");
+            var reader = new BoardReader(live);
+            var tile = reader.Read((int)Get(point, "x"), (int)Get(point, "y"));
+            if (!tile.Exists) throw new InvalidOperationException("No live tile at that point.");
+            if (mapMode == 1)
+            {
+                if (!tile.Available || !reader.CanSpawnPieceOnPosition(reader.Point(tile.X, tile.Y)))
+                    throw new InvalidOperationException("That tile is occupied or blocked.");
+                selectedTile = tile;
+                status = "Selected (" + tile.X + "," + tile.Y + "). Confirm placement.";
+            }
+            else if (mapMode == 2)
+            {
+                removalTarget = ValidateRemovalTarget(reader, tile);
+                selectedTile = tile;
+                status = "Selected " + removalTarget.TypeKey + ". Confirm removal.";
+            }
+        }
+        catch (Exception ex)
+        {
+            selectedTile = null; removalTarget = null;
+            status = ex.GetBaseException().Message;
+            log.LogInfo("BMF level editor map pick: " + status);
+        }
+    }
+
+    // Removal means the native damage/destruction process for an eligible
+    // hostile creature or attackable prop. Never destroy Unity scene objects,
+    // directly edit the board, down heroes, remove NPCs or touch POI pieces.
+    private static RemovalTarget ValidateRemovalTarget(BoardReader board, TileCell tile)
+    {
+        if (!tile.Exists || !tile.Occupied) throw new InvalidOperationException("No occupied piece at this tile.");
+        var piece = board.PieceAt(board.Point(tile.X, tile.Y));
+        if (piece == null || piece.Pointer == IntPtr.Zero || piece.GetType().FullName != "Jade.GameModel.Piece")
+            throw new InvalidOperationException("Piece identity unavailable.");
+        if (Get(piece, "isPlayerControlled") is not bool controlled || controlled ||
+            Get(piece, "isDownable") is not bool downable || downable ||
+            Get(piece, "isPOI") is not bool poi || poi ||
+            Get(piece, "usesHealth") is not bool usesHealth || !usesHealth ||
+            Get(piece, "isCreatureNonNpc") is not bool creature ||
+            Get(piece, "isAttackableProp") is not bool prop)
+            throw new InvalidOperationException("Protected or non-destructible piece.");
+        var team = Get(piece, "team")?.ToString();
+        if (!(creature && team == "EnemyOfPlayers") && !(prop && !creature && (team == "None" || team == "EnemyOfPlayers")))
+            throw new InvalidOperationException("Only hostile creatures and destructible non-player props can be removed.");
+        var pieceType = ModelType("Piece");
+        if (Require(ModelType("PieceHelpers"), "IsDead", true, typeof(bool), pieceType)
+            .Invoke(null, new object[] { piece }) is not bool dead || dead)
+            throw new InvalidOperationException("Piece is already dead or unavailable.");
+        var pieceId = Get(piece, "pieceId");
+        if (!ModelType("PieceId").IsInstanceOfType(pieceId) || Call(pieceId, "get_Id") is not int id || id < 0)
+            throw new InvalidOperationException("Piece ID unavailable.");
+        var typeId = Get(piece, "typeId");
+        if (Call(typeId, "get_Id") is not string key || string.IsNullOrWhiteSpace(key))
+            throw new InvalidOperationException("Piece type unavailable.");
+        return new RemovalTarget(piece, id, key, tile);
+    }
+
+    // Read the registered physical damage type from the live board's native
+    // audio/visual manager; both definitions registries originate in the
+    // current board presenter. No fabricated damage IDs or arbitrary assets.
+    private static object PhysicalDamageId(Context context, object handler)
+    {
+        var presenter = Get(handler, "boardPresenter");
+        var state = Get(presenter, "gameState") as Il2CppObjectBase;
+        if (state == null || state.Pointer != context.State.Pointer) throw new InvalidOperationException("Board presenter changed.");
+        var manager = Get(presenter, "audioHapticVisualManager");
+        var pieces = Get(manager, "pieceRegistry") as Il2CppObjectBase;
+        if (context.Registry == null || pieces == null || pieces.Pointer != context.Registry.Pointer)
+            throw new InvalidOperationException("Current damage registry identity not verified.");
+        var registry = Get(manager, "damageTypeRegistry");
+        var registryType = Load("GameDefinitions", "Jade.GameDefinitions.DamageTypeRegistry");
+        var idType = ModelType("DamageTypeId");
+        var defType = Load("GameDefinitions", "Jade.GameDefinitions.DamageTypeDefinition");
+        if (!registryType.IsInstanceOfType(registry)) throw new InvalidOperationException("Current damage registry unavailable.");
+        // The supplied build's DamageTypeId.PHYSICAL_DAMAGE_TYPE_NAME
+        // metadata constant is "Physical".
+        var args = new object[] { "Physical", null };
+        if (Require(registryType, "TryGetDamageTypeIdByName", false, typeof(bool), typeof(string), idType.MakeByRefType())
+            .Invoke(registry, args) is not bool found || !found || !idType.IsInstanceOfType(args[1]) ||
+            Call(args[1], "get_Id") is not string name || name != "Physical" ||
+            Require(registryType, "GetDamageTypeDefinition", false, defType, idType).Invoke(registry, new[] { args[1] }) is not UObject def ||
+            def == null)
+            throw new InvalidOperationException("Registered physical damage type unavailable.");
+        return args[1];
+    }
+
+    private static object MakeRemovalRequest(RemovalTarget target, object damageId)
+    {
+        var stats = Get(target.Piece, "stats");
+        var statsType = ModelType("StatsFacade");
+        var statType = ModelType("Stats+Type");
+        if (!statsType.IsInstanceOfType(stats) || !statType.IsEnum)
+            throw new InvalidOperationException("Native piece stats unavailable.");
+        var get = Require(statsType, "GetStat", false, typeof(int), statType);
+        int hp = (int)get.Invoke(stats, new[] { Enum.Parse(statType, "Health") });
+        int armor = (int)get.Invoke(stats, new[] { Enum.Parse(statType, "PhysicalArmor") });
+        if (hp <= 0 || hp > 10000 || armor < 0 || armor > 10000)
+            throw new InvalidOperationException("Piece health or armor outside supported removal range.");
+        int damage = checked(hp + armor + 1);
+        var elementType = Load("Jade.Messaging", "Jade.Messaging.DamageTypeWithProperties");
+        var damageIdType = ModelType("DamageTypeId");
+        ConstructorInfo ctor = null;
+        foreach (var c in elementType.GetConstructors())
+        {
+            var p = c.GetParameters();
+            if (p.Length != 3 || p[0].ParameterType != typeof(int) || p[1].ParameterType != damageIdType ||
+                p[0].Name != "damage" || p[1].Name != "typeId" || p[2].Name != "additionalTags" ||
+                p[2].ParameterType.IsValueType || p[2].ParameterType.IsByRef) continue;
+            if (ctor != null) throw new InvalidOperationException("Ambiguous damage element constructor.");
+            ctor = c;
+        }
+        if (ctor == null) throw new InvalidOperationException("Damage element constructor unavailable.");
+        // Verified native constructor explicitly replaces a null additionalTags
+        // reference with its own empty tags collection (GameAssembly 0x1822a8ed0).
+        var element = ctor.Invoke(new[] { (object)damage, damageId, (object)null });
+        var requestType = Load("Jade.Messaging", "Jade.Messaging.RequestTryDealDamageToPiece");
+        return Constructor(requestType, elementType, ModelType("PieceId")).Invoke(new[] { element, Get(target.Piece, "pieceId") });
+    }
+
+    private void Remove(RemovalCommand command)
+    {
+        if (!plugin.VerifiedGame) throw new InvalidOperationException("Removal rejected: unverified build.");
+        if (!HouseRules.TryGetLevelEditorContext(out var live, out var reason)) throw new InvalidOperationException(reason);
+        if (!command.Snapshot.SameSession(live)) throw new InvalidOperationException("Session changed. Refresh.");
+        var reader = new BoardReader(live);
+        var tile = reader.Read(command.Target.Tile.X, command.Target.Tile.Y);
+        var target = ValidateRemovalTarget(reader, tile);
+        if (!command.Target.SamePiece(target)) throw new InvalidOperationException("Selected piece moved or changed.");
+        if (!HouseRules.TryGetLevelEditorPicker(live, out var handler, out reason)) throw new InvalidOperationException(reason);
+        RequireMapIdle(handler);
+        var request = MakeRemovalRequest(target, PhysicalDamageId(live, handler));
+        var message = Load("Jade.Messaging", "Jade.Messaging.RequestTryDealDamageToPiece");
+        var roomType = Load("Jade.Networking", "Jade.Networking.LocalNetworkRoom");
+        var requestType = Load("Jade.Messaging", "Jade.Messaging.IRequest");
+        if (!roomType.IsInstanceOfType(live.Room) || !requestType.IsAssignableFrom(message) || !message.IsInstanceOfType(request))
+            throw new InvalidOperationException("Native local removal request unavailable.");
+        var send = Require(roomType, "Send", false, typeof(void), requestType);
+        if (Call(live.Room, "get_HasRequestsInQueue") is not bool busy || busy)
+            throw new InvalidOperationException("Local room busy; select again after it becomes idle.");
+        if (!HouseRules.TryGetLevelEditorContext(out var final, out reason) || !live.SameSession(final))
+            throw new InvalidOperationException("Session changed before dispatch: " + reason);
+        send.Invoke(live.Room, new[] { request });
+        log.LogInfo("BMF level editor removal damage request submitted: " + target.TypeKey + " at " + tile.X + "," + tile.Y);
+        selectedTile = null; removalTarget = null; snapshot = live;
+        status = "Removal damage submitted. Check result; game death/loot rules apply.";
+    }
+
+    // A compact overlay leaves the game map visible. Middle-click is reserved
+    // for picking so ordinary left-click piece/card interactions are not used.
+    internal bool DrawMapTool()
+    {
+        if (mapMode == 0) return false;
+        try
+        {
+            float width = Math.Min(610f, Screen.width - 24f);
+            float x = (Screen.width - width) * 0.5f, y = 10f;
+            var panel = new Rect(x, y, width, 152f);
+            GUI.Box(panel, mapMode == 1 ? "BMF | Place enemy on game map" : "BMF | Remove piece from game map");
+            bool ready = !mapPickRequested && pending == null && pendingRemoval == null;
+            GUI.Label(new Rect(x + 12, y + 23, width - 24, 22), mapMode == 1 ?
+                "Enemy: " + (selectedEnemy?.Name ?? "(select enemy first)") : "Enemies and destructible props only. Normal death effects apply.");
+            GUI.Label(new Rect(x + 12, y + 45, width - 24, 22), selectedTile == null ?
+                "Middle-click a tile/piece on the 3D game board." : "Selected tile (" + selectedTile.X + "," + selectedTile.Y + ") " + selectedTile.Detail);
+            float half = (width - 30) * 0.5f;
+            if (GUI.Button(new Rect(x + 12, y + 72, half, 27), "Back to editor / cancel"))
+            { EndMapTool(); return true; }
+            if (ready && mapMode == 1 && selectedTile?.Available == true && selectedEnemy != null)
+            {
+                if (GUI.Button(new Rect(x + 18 + half, y + 72, half, 27), "Confirm placement"))
+                    pending = new SpawnCommand(snapshot, selectedTile, selectedEnemy);
+            }
+            else if (ready && mapMode == 2 && removalTarget != null)
+            {
+                if (GUI.Button(new Rect(x + 18 + half, y + 72, half, 27), "Confirm removal (damage)"))
+                    pendingRemoval = new RemovalCommand(snapshot, removalTarget);
+            }
+            else GUI.Label(new Rect(x + 18 + half, y + 72, half, 27), "Select an eligible target");
+            GUI.Label(new Rect(x + 12, y + 102, width - 24, 25), status);
+            GUI.Label(new Rect(x + 12, y + 128, width - 24, 20), "Disposable local solo only | F10 cancels and closes");
+            var e = Event.current;
+            if (ready && e != null && e.type == EventType.MouseDown && e.button == 2 && !panel.Contains(e.mousePosition))
+            {
+                mapClickX = e.mousePosition.x; mapClickY = e.mousePosition.y;
+                mapPickRequested = true; selectedTile = null; removalTarget = null;
+                status = "Resolving live board tile...";
+                e.Use();
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            EndMapTool();
+            status = "Map toolbar unavailable: " + ex.GetBaseException().Message;
+            log.LogWarning("BMF level editor toolbar: " + ex.GetBaseException());
+            return false;
+        }
     }
 
     internal void Draw(float x, float y, float width, float height)
@@ -467,8 +779,20 @@ internal sealed class LevelEditor
             void Label(float top, string value) => GUI.Label(new Rect(x + 15, y + top, inner, 22), value);
             bool Button(float top, float l, float w, string value) => GUI.Button(new Rect(x + l, y + top, w, 24), value);
             Label(91, "Runtime level editor | Disposable local solo only; back up saves.");
-            if (Button(115, 15, left, "Refresh board & enemies"))
+            float actionWidth = inner / 3f;
+            if (Button(115, 15, actionWidth - 3, width < 600f ? "Refresh" : "Refresh board & enemies"))
             { refresh = true; pan = confirming = false; pending = null; }
+            if (Button(115, 15 + actionWidth, actionWidth - 3, "Place on map"))
+            {
+                if (snapshot != null && selectedEnemy != null && !refresh && !pan)
+                { BeginMapTool(1); return; }
+                status = "Refresh and select an enemy first.";
+            }
+            if (Button(115, 15 + 2 * actionWidth, actionWidth - 3, "Remove on map"))
+            {
+                if (snapshot != null && !refresh && !pan) { BeginMapTool(2); return; }
+                status = "Refresh the current solo board first.";
+            }
             if (snapshot == null)
             {
                 Label(145, status);
@@ -489,7 +813,6 @@ internal sealed class LevelEditor
                         cell - 1, cell - 1), ReferenceEquals(tile, selectedTile) ? "*" : tile.Symbol) && tile.Exists)
                     { selectedTile = tile; confirming = false; pending = null; }
                 }
-            GUI.Label(new Rect(rx, y + 115, right, 24), "Enemies (registered, 1x1)");
             var typed = GUI.TextField(new Rect(rx, y + 141, right, 24), filter, 100);
             if (typed != filter) { filter = typed; ApplyFilter(); confirming = false; selectedEnemy = null; pending = null; }
             float footer = height - 96;
@@ -507,7 +830,7 @@ internal sealed class LevelEditor
             if (GUI.Button(new Rect(rx + right - 34, y + footer - 25, 34, 24), ">")) enemyPage = Math.Min(pages - 1, enemyPage + 1);
             Label(footer - 2, selectedTile == null ? "Board " + sizeX + "x" + sizeY + " | origin (" + startX + "," + startY + ") | . free # blocked P piece" :
                 "(" + selectedTile.X + "," + selectedTile.Y + ") " + selectedTile.Detail);
-            Label(footer + 20, "Enemy: " + (selectedEnemy?.Name ?? "select from list"));
+            Label(footer + 20, "Enemy: " + (selectedEnemy?.Name ?? "select registered 1x1 enemy from list"));
             if (selectedTile?.Available == true && selectedEnemy != null && !refresh && !pan && pending == null)
             {
                 if (Button(footer + 42, 15, inner, confirming ? "Confirm enemy spawn (local solo)" : "Place selected enemy"))

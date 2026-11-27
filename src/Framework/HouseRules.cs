@@ -46,6 +46,9 @@ internal sealed class HouseRules : BattlemarkedModule
     private bool debugRegistryCaptureError;
     private readonly Dictionary<IntPtr, (Il2CppObjectBase State, object Spawner)> debugSpawnContexts = new();
     private bool debugSpawnCaptureError;
+    private object debugBoardHandler;
+    private int debugBoardHandlerFrame;
+    private int debugBoardHandlerScene;
     private bool modelFromHud;
     private int ignoredGetterCaptures;
     private string roomHook = "not attempted", lastFlags = "not observed", lastRejectedFlags = "not observed";
@@ -369,6 +372,17 @@ internal sealed class HouseRules : BattlemarkedModule
                 ctx.Patches.Patch(constructor, postfix: Hook(nameof(CaptureDebugSpawnContext)));
             }
             catch (Exception ex) { ctx.Log.LogWarning("Optional level editor spawn capture: " + ex.Message); }
+            // Capture the currently ticking desktop board interaction handler.
+            // Read-only; no patch changes normal mouse input or game rules.
+            try
+            {
+                var handler = view.GetType("Jade.Input.NonVR.BoardInteractionHandlerNonVR", true);
+                var tick = handler.GetMethod("Tick", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                if (tick == null || tick.ReturnType != typeof(void))
+                    throw new InvalidOperationException("Desktop board interaction tick unavailable.");
+                ctx.Patches.Patch(tick, postfix: Hook(nameof(CaptureDebugBoardPicker)));
+            }
+            catch (Exception ex) { ctx.Log.LogWarning("Optional level editor map picker: " + ex.Message); }
             // The supplied interop report has separate native start and join
             // entry points. Keep this independent of the working AP hooks.
             try
@@ -700,6 +714,50 @@ internal sealed class HouseRules : BattlemarkedModule
                 r.ctx.Log.LogWarning("Level editor spawn capture failed: " + ex.GetBaseException().Message);
             r.debugSpawnCaptureError = true;
         }
+    }
+
+    private static void CaptureDebugBoardPicker(object __instance)
+    {
+        var r = running;
+        if (r == null || r.faulted || Plugin.Instance?.DeveloperModeEnabled != true ||
+            Environment.CurrentManagedThreadId != r.mainThread) return;
+        try
+        {
+            r.debugBoardHandler = __instance;
+            r.debugBoardHandlerFrame = UnityEngine.Time.frameCount;
+            r.debugBoardHandlerScene = SceneManager.GetActiveScene().handle;
+        }
+        catch { r.debugBoardHandler = null; }
+    }
+
+    internal static bool TryGetLevelEditorPicker(LevelEditor.Context context, out object handler, out string reason)
+    {
+        handler = null;
+        reason = "Current desktop board picker unavailable; wait for the board to load.";
+        var r = running;
+        if (r == null || r.faulted || Plugin.Instance?.DeveloperModeEnabled != true ||
+            Plugin.Instance?.VerifiedGame != true || Environment.CurrentManagedThreadId != r.mainThread ||
+            context == null || r.debugBoardHandlerScene != context.Scene ||
+            (long)UnityEngine.Time.frameCount - r.debugBoardHandlerFrame < 0 ||
+            (long)UnityEngine.Time.frameCount - r.debugBoardHandlerFrame > 30) return false;
+        try
+        {
+            var candidate = r.debugBoardHandler as Il2CppObjectBase;
+            if (candidate == null || candidate.Pointer == IntPtr.Zero ||
+                candidate.GetType().FullName != "Jade.Input.NonVR.BoardInteractionHandlerNonVR") return false;
+            var state = DebugWorkspace.ReadMember(candidate, "gameState") as Il2CppObjectBase;
+            var room = DebugWorkspace.ReadMember(candidate, "networkRoom") as Il2CppObjectBase;
+            if (state == null || state.Pointer != context.State.Pointer ||
+                room == null || context.Room is not Il2CppObjectBase verifiedRoom || room.Pointer != verifiedRoom.Pointer)
+            { reason = "Desktop picker is not bound to the verified local session."; return false; }
+            var board = DebugWorkspace.ReadMember(state, "board") as Il2CppObjectBase;
+            if (board == null || board.Pointer != context.Board.Pointer)
+            { reason = "Desktop picker board changed."; return false; }
+            handler = candidate;
+            reason = "Verified desktop board picker.";
+            return true;
+        }
+        catch (Exception ex) { reason = ex.GetBaseException().Message; return false; }
     }
 
     internal static bool TryGetLevelEditorContext(out LevelEditor.Context context, out string reason)
@@ -1120,7 +1178,7 @@ internal sealed class HouseRules : BattlemarkedModule
     public override void OnSceneChanged(SceneInfo info) => SyncScene(info.Handle, info.Name);
     public override void OnUpdate()
     {
-        if (Plugin.Instance?.DeveloperModeEnabled != true) { debugCardRegistries.Clear(); debugSpawnContexts.Clear(); }
+        if (Plugin.Instance?.DeveloperModeEnabled != true) { debugCardRegistries.Clear(); debugSpawnContexts.Clear(); debugBoardHandler = null; }
         ConsumeUnverifiedHealthTransition();
         if (requestedRefundMode != refundMode && (DateTime.UtcNow - lastModeCheck).TotalSeconds >= 1)
             TryApplyModeChange();
@@ -1146,5 +1204,5 @@ internal sealed class HouseRules : BattlemarkedModule
         }
         catch (Exception ex) { ctx.Log.LogWarning("House rules report: " + ex.Message); }
     }
-    public override void OnStop() { debugCardRegistries.Clear(); debugSpawnContexts.Clear(); health?.CancelForTransition("Module stopped"); LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); health?.Write(); }
+    public override void OnStop() { debugCardRegistries.Clear(); debugSpawnContexts.Clear(); debugBoardHandler = null; health?.CancelForTransition("Module stopped"); LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); health?.Write(); }
 }

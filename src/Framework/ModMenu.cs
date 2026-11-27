@@ -130,12 +130,16 @@ internal sealed class ModMenu
     {
         if (!developerMode.Value) nativeDebugMenu.CloseOwned();
         debugWorkspace.Tick(developerMode.Value && enabled.Value && !broken && open && tab == 7);
-        levelEditor.Tick(developerMode.Value && enabled.Value && !broken && open && tab == 8);
-        if (!enabled.Value || broken) return;
+        if (!enabled.Value || broken) { levelEditor.Tick(false); return; }
         if (!inputChecked) { inputChecked = true; ResolveInput(); }
-        if (poll == null) return;
-        try { usingPolling = true; if (poll()) SetOpen(!open); }
-        catch (Exception ex) { poll = null; usingPolling = false; log.LogWarning("BMF hotkey polling unavailable; using GUI keyboard events: " + ex.Message); }
+        // Process F10 before dispatching queued map commands so closing the
+        // editor clears the selection and pending request first.
+        if (poll != null)
+        {
+            try { usingPolling = true; if (poll()) SetOpen(!open); }
+            catch (Exception ex) { poll = null; usingPolling = false; log.LogWarning("BMF hotkey polling unavailable; using GUI keyboard events: " + ex.Message); }
+        }
+        levelEditor.Tick(developerMode.Value && enabled.Value && !broken && open && tab == 8);
     }
     private void DrawUpdateWarning(float x, float y, float width)
     {
@@ -176,6 +180,8 @@ internal sealed class ModMenu
                 if (e != null && e.type == EventType.KeyDown && e.keyCode == KeyCode.F10) { SetOpen(!open); e.Use(); }
             }
             if (!open) return;
+            // Compact targeting toolbar exposes the actual 3D map.
+            if (tab == 8 && developerMode.Value && levelEditor.DrawMapTool()) return;
             float width = Math.Min(800f, Screen.width - 24f), height = Math.Min(530f, Screen.height - 24f);
             if (width < 460f || height < 410f) { FinishDrag(); return; }
             float x = position.X(Screen.width, width), y = position.Y(Screen.height, height);

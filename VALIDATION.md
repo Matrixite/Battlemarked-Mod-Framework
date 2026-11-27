@@ -1,8 +1,14 @@
-# v0.6.21-alpha validation
+# v0.6.22-alpha validation
 
 ## First stable release automation
 
 The 12 Python release-gate and simulated publication tests pass locally. These cover the current alpha skip, exact stable-version eligibility, inconsistent version rejection, wrong branch refusal, mismatched tag refusal, versioned source archive and matching SHA-256 checksum, and repeated-run protection. The publication tests use a temporary local Git remote and mock GitHub CLI; they do not create a real release. The hosted workflow is configured to run the .NET 8 core tests before publication; dotnet and the Windows game environment are unavailable here. Real GitHub Actions execution and Windows/gameplay acceptance remain unverified. No framework version, gameplay behavior or updater code changes are included in this automation.
+
+## v0.6.22 direct map tools
+
+Verified supplied metadata and native code: `Jade.Input.NonVR.BoardInteractionHandlerNonVR.Tick` and `TryGetHoveredTile(Ray, out TileSetHelpers.TileHoverData)` are present in GameView.dll; the handler holds current gameState, networkRoom, boardPresenter and cameraControlModel. The camera model's ActiveCamera exposes the Unity camera. The hit test performs a native physics raycast with game layer masks. The board presenter's audio/visual manager holds the native damage type and piece registries. The native DamageTypeId constant is Physical; DamageTypeWithProperties constructor substitutes an empty collection when the additionalTags reference is null. RequestTryDealDamageToPiece accepts a single element and PieceId. The source uses live HUD/board/room identity, bounded stats and explicit confirmation; removal is damage/destruction, not arbitrary object deletion. No Windows generated interop SDK available and user's Desktop Commander device remains offline. All 29 Python Dev Tools and Release tests pass; no live compile or gameplay verification.
+
+Acceptance on disposable local solo: enable Developer mode, refresh editor, select an enemy and Place on map. Toolbar exposes the board; middle-click a visible free tile, confirm, verify exactly one intended spawn and repeat on another tile. Click invalid/outside-board, occupied/blocked, toolbar, then cancel; confirm no request. Remove on map, middle-click an enemy or destructible prop, confirm, observe actual result and game effects. Try hero, NPC, POI, scenery, moved target, busy game, scene transition, disabled developer mode, closed editor and multiplayer: no removal dispatch. Check F10 cancels before queued map command processing. If unavailable, consult toolbar status or BepInEx LogOutput.log for exact native binding reason.
 
 ## v0.6.21 level editor empty enemy list
 
