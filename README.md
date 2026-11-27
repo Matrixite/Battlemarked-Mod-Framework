@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.17-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.18-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,10 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.18 — installer build diagnostics
+
+The v0.6.17 installer transcript confirms that the source build exited unsuccessfully after detecting the correct game fingerprint and .NET SDKs, but included no compiler/restore output. The installer now explicitly redirects native stdout and stderr to per-project files and copies both streams and the exit code into `BepInEx/BMF-Updates/build-details.log` before handling failure. The transcript also receives the captured lines. Existing transactional copying and backup behavior are unchanged. If this update fails, share build-details.log; the underlying build failure is not yet identified. Windows execution remains to be verified.
 
 ## v0.6.17 — debug workspace compiler compatibility
 

@@ -154,8 +154,9 @@ if ($RestoreLatest) {
 foreach ($relative in @('BepInEx/core/BepInEx.Unity.IL2CPP.dll','BepInEx/core/0Harmony.dll','BepInEx/core/BepInEx.Core.dll','BepInEx/core/Il2CppInterop.Runtime.dll','BepInEx/interop/UnityEngine.CoreModule.dll','BepInEx/interop/UnityEngine.IMGUIModule.dll')) {
     if (!(Test-Path -LiteralPath (Join-Path $GameDir $relative) -PathType Leaf)) { throw "Missing $relative. Install BepInEx 6 IL2CPP x64 and launch once to generate interop." }
 }
-if (!(Get-Command dotnet -ErrorAction SilentlyContinue)) { throw 'Install the .NET 8 SDK and .NET 6 targeting pack/SDK.' }
-$sdks = @(& dotnet --list-sdks)
+$dotnetCommand = Get-Command dotnet -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if (!$dotnetCommand) { throw 'Install the .NET 8 SDK and .NET 6 targeting pack/SDK.' }
+$sdks = @(& $dotnetCommand.Source --list-sdks)
 if ($LASTEXITCODE -ne 0 -or !$sdks.Count) { throw 'No .NET SDK detected.' }
 Write-Host "Detected .NET SDKs: $($sdks -join '; ')"
 if ($CheckOnly) {
@@ -168,12 +169,47 @@ $projects = @(@{Project='src/Framework/Battlemarked.ModFramework.csproj'; Dll=$n
 if ($IncludeExample -or ($Install -and (Test-Path -LiteralPath (Join-Path $dest $names[1]) -PathType Leaf))) {
     $projects += @{Project='src/Example/Battlemarked.Example.csproj'; Dll=$names[1]}
 }
+# A PowerShell transcript does not reliably capture stdout/stderr from native
+# executables. Redirect both native streams to files, and copy their contents
+# to a durable combined report before checking the exit code.
+$buildLogRoot = Join-Path $GameDir 'BepInEx\BMF-Updates'
+New-Item -ItemType Directory -Path $buildLogRoot -Force | Out-Null
+$buildLog = Join-Path $buildLogRoot 'build-details.log'
+Set-Content -LiteralPath $buildLog -Value @("BMF build started: $(Get-Date -Format o)", "Game directory: $GameDir", "SDKs: $($sdks -join '; ')") -Encoding UTF8
+Write-Host "Build diagnostics: $buildLog"
 foreach ($p in $projects) {
     $project = Join-Path $root $p.Project
-    # The automatic updater is a child of the game. Do not leave reusable
-    # MSBuild/Roslyn servers running after the installer has finished.
-    & dotnet build $project -c Release --disable-build-servers -p:UseSharedCompilation=false -nr:false "-p:GameDir=$GameDir"
-    if ($LASTEXITCODE -ne 0) { throw "Build failed: $project" }
+    $stdout = Join-Path $buildLogRoot ($p.Dll + '.stdout.log')
+    $stderr = Join-Path $buildLogRoot ($p.Dll + '.stderr.log')
+    Add-Content -LiteralPath $buildLog -Value "Building: $project" -Encoding UTF8
+    Write-Host "Building: $project"
+    # Quote the two path-bearing arguments for Start-Process's Windows argument
+    # string. Do not leave reusable MSBuild/Roslyn servers attached to Steam.
+    $arguments = @('build', ('"{0}"' -f $project), '-c', 'Release',
+        '--disable-build-servers', '-p:UseSharedCompilation=false', '-nr:false',
+        ('"-p:GameDir={0}"' -f $GameDir))
+    try {
+        $build = Start-Process -FilePath $dotnetCommand.Source -ArgumentList $arguments -NoNewWindow -Wait -PassThru `
+            -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    }
+    catch {
+        Add-Content -LiteralPath $buildLog -Value ("Could not run dotnet: " + $_.Exception.Message) -Encoding UTF8
+        throw
+    }
+    foreach ($nativeLog in @($stdout, $stderr)) {
+        $heading = "--- $(Split-Path $nativeLog -Leaf) ---"
+        Add-Content -LiteralPath $buildLog -Value $heading -Encoding UTF8
+        Write-Host $heading
+        if (Test-Path -LiteralPath $nativeLog -PathType Leaf) {
+            $lines = @(Get-Content -LiteralPath $nativeLog -Encoding UTF8)
+            if ($lines.Count -gt 0) {
+                Add-Content -LiteralPath $buildLog -Value $lines -Encoding UTF8
+                foreach ($line in $lines) { Write-Host $line }
+            }
+        }
+    }
+    Add-Content -LiteralPath $buildLog -Value "dotnet exit code: $($build.ExitCode)" -Encoding UTF8
+    if ($build.ExitCode -ne 0) { throw "Build failed (exit code $($build.ExitCode)): $project. See $buildLog" }
     $dir = Split-Path $project -Parent
     $p.Output = Join-Path $dir "bin/Release/net6.0/$($p.Dll)"
     if (!(Test-Path -LiteralPath $p.Output -PathType Leaf)) { throw "Missing build output: $($p.Dll)" }

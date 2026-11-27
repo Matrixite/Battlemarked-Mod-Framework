@@ -1,8 +1,12 @@
-# v0.6.17-alpha validation
+# v0.6.18-alpha validation
 
 ## First stable release automation
 
 The 12 Python release-gate and simulated publication tests pass locally. These cover the current alpha skip, exact stable-version eligibility, inconsistent version rejection, wrong branch refusal, mismatched tag refusal, versioned source archive and matching SHA-256 checksum, and repeated-run protection. The publication tests use a temporary local Git remote and mock GitHub CLI; they do not create a real release. The hosted workflow is configured to run the .NET 8 core tests before publication; dotnet and the Windows game environment are unavailable here. Real GitHub Actions execution and Windows/gameplay acceptance remain unverified. No framework version, gameplay behavior or updater code changes are included in this automation.
+
+## v0.6.18 build diagnostics
+
+User-provided v0.6.17 transcript confirms the update worker reached installation and the framework build returned failure; .NET SDKs 10.0.404 and 11.0.100 were detected and the game fingerprint matched. The transcript contains no compiler/restore diagnostics, so the precise cause of the unsuccessful build is still unknown. Source regression checks verify explicit native stdout/stderr redirection, reporting before exit-code handling, and failure before DLL replacement. Windows acceptance: trigger a build failure in a disposable test installation (e.g. an invalid source file), confirm build-details.log contains native error text and exit code and no installed DLL was replaced; then build valid source and confirm installation. PowerShell and the Windows interop set are unavailable in the development environment.
 
 ## v0.6.17 interop compiler compatibility
 
