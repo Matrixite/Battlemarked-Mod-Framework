@@ -1,4 +1,10 @@
-# v0.6.32-alpha validation
+# v0.6.33-alpha validation
+
+## v0.6.33 Recurring Cards
+
+Verified supplied IL2CPP metadata and native disassembly: CardDefinition.cardUsageType is CardUsageTypeBase; native usage classes are ConsumeCardOnUse, SetCooldownOnUse(int turnsOfCooldown), and CardCanImmediatelyBeReused. UpdateCardInstance state-machine MoveNext checks the concrete usage class directly; the consume branch removes the card, the cooldown branch calls CardInventory.TryAddCooldown and emits the native ViewEventCardUsed with consumption false. The native UseAndExecuteCard coroutine allocates the update state machine directly; patching the factory alone would miss it. RequestHandlerPlayCard exposes the actual gameState and actionRegistry. The new hook binds the exact nested coroutine, validates the selected card instance and owner against the verified local HUD and authoritative board, and substitutes a temporary clone only there. The original definition remains unchanged. Three new structural source checks fail before implementation and pass afterward; all 61 Python Dev Tools/release checks pass. The .NET core visibility matrix is extended but not run; no dotnet, generated Windows interop SDK or live game runtime is available here. No claim of successful native gameplay is made.
+
+Acceptance: start a disposable local solo campaign with House Rules running; enable Recurring Cards, open F10 > Cards, select one consumable card on one hero, and play it. Confirm the same instance remains, normal AP/effects apply, cooldown expires and it can be used again. Leave an identical second card unselected and verify it consumes normally. Repeat on another hero, on a Hero Form, with a backpack card moved to hand, and an already replenishable/zero-cooldown card. Toggle off one selection then disable the mod and check normal behavior and tab hiding; scrap a selected card, change campaigns, and ensure choices cannot leak. Confirm multiplayer and unverified builds unchanged. If native attachment/application fails, inspect BepInEx log for "BMF recurring cards" and "BMF recurring card". Printed card art is not modified.
 
 ## v0.6.32 party-wide Hero Forms
 

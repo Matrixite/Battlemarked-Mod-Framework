@@ -20,7 +20,7 @@ internal sealed class ModMenu
     private readonly DebugWorkspace debugWorkspace;
     private readonly LevelEditor levelEditor;
     private readonly ManualLogSource log;
-    private readonly ConfigEntry<bool> enabled, developerMode, heroFormsEnabled;
+    private readonly ConfigEntry<bool> enabled, developerMode, heroFormsEnabled, recurringCardsEnabled;
     private readonly ConfigFile config;
     private readonly ConfigEntry<int> savedX, savedY;
     private readonly MenuPosition position;
@@ -29,7 +29,7 @@ internal sealed class ModMenu
     private int tab;
     private bool healthRulesPage;
     // Slot 2 is reserved (former Health tab) so all other tab IDs stay stable.
-    private static readonly string[] Tabs = { "Overview", "House Rules", null, "Presets", "Mods", "Reports", "Updates", "Dev Tools", "Level Editor", "Hero Forms" };
+    private static readonly string[] Tabs = { "Overview", "House Rules", null, "Presets", "Mods", "Reports", "Updates", "Dev Tools", "Level Editor", "Hero Forms", "Recurring Cards" };
     private string message = "Settings apply on next launch.";
     private Func<bool> poll;
     private bool inputChecked;
@@ -50,6 +50,7 @@ internal sealed class ModMenu
         enabled = config.Bind("Menu", "Enabled", true, "Enable experimental desktop mod manager.");
         developerMode = config.Bind("Menu", "DeveloperMode", false, "Show built-in diagnostic and example modules, Reports, Dev Tools and Level Editor. Disabling also closes a native debug menu opened through BMF; module settings are unchanged.");
         heroFormsEnabled = config.Bind("Menu", "HeroFormsEnabled", true, "Show the experimental Hero Forms tab and allow verified local transformations. Running House rules are required; Developer mode is not needed. Applies immediately.");
+        recurringCardsEnabled = config.Bind("Menu", "RecurringCardsEnabled", true, "Enable per-card recurring choices on verified local solo boards. Requires running House rules; choices are session-only.");
         open = config.Bind("Menu", "StartOpen", false, "Open menu automatically; fallback if F10 is unavailable.").Value;
         savedX = config.Bind("Menu", "PositionX", -1, "Last menu left position in pixels; -1 centers horizontally.");
         savedY = config.Bind("Menu", "PositionY", -1, "Last menu top position in pixels; -1 centers vertically.");
@@ -130,11 +131,12 @@ internal sealed class ModMenu
     }
     internal bool DeveloperModeEnabled => developerMode.Value && enabled.Value && !broken;
     internal bool HeroFormsEnabled => heroFormsEnabled.Value && enabled.Value && !broken;
+    internal bool RecurringCardsEnabled => recurringCardsEnabled.Value && enabled.Value && !broken;
     internal void Tick()
     {
         if (!developerMode.Value) nativeDebugMenu.CloseOwned();
         debugWorkspace.Tick(developerMode.Value && enabled.Value && !broken && open && tab == 7);
-        if (!enabled.Value || broken) { levelEditor.Tick(false); return; }
+        if (!enabled.Value || broken) { levelEditor.Tick(false); RecurringCards.Tick(false); return; }
         if (!inputChecked) { inputChecked = true; ResolveInput(); }
         // Process F10 before dispatching queued map commands so closing the
         // editor clears the selection and pending request first.
@@ -143,6 +145,7 @@ internal sealed class ModMenu
             try { usingPolling = true; if (poll()) SetOpen(!open); }
             catch (Exception ex) { poll = null; usingPolling = false; log.LogWarning("BMF hotkey polling unavailable; using GUI keyboard events: " + ex.Message); }
         }
+        RecurringCards.Tick(RecurringCardsEnabled && open && tab == 10);
         if (tab == 9) levelEditor.Tick(HeroFormsEnabled && open, true);
         else levelEditor.Tick(developerMode.Value && enabled.Value && !broken && open && tab == 8);
     }
@@ -200,14 +203,14 @@ internal sealed class ModMenu
             bool houseRulesEnabled = plugin.IsEnabledForNextLaunch(HouseRules.ModuleId);
             var visibleTabs = new List<int>();
             for (int i = 0; i < Tabs.Length; i++)
-                if (MenuModuleVisibility.IsTabVisible(Tabs[i], developerMode.Value, houseRulesEnabled, heroFormsEnabled.Value)) visibleTabs.Add(i);
+                if (MenuModuleVisibility.IsTabVisible(Tabs[i], developerMode.Value, houseRulesEnabled, heroFormsEnabled.Value, recurringCardsEnabled.Value)) visibleTabs.Add(i);
             if ((tab == 8 || tab == 9) && !visibleTabs.Contains(tab)) levelEditor.Leave();
             if (!visibleTabs.Contains(tab)) tab = 4; // Mods, where developer mode can be restored.
             float tabWidth = (width - 24) / visibleTabs.Count;
             for (int column = 0; column < visibleTabs.Count; column++)
             {
                 int i = visibleTabs[column];
-                string title = i == 8 && width < 700 ? "Editor" : i == 9 && width < 700 ? "Forms" : Tabs[i];
+                string title = i == 8 && width < 700 ? "Editor" : i == 9 && width < 700 ? "Forms" : i == 10 ? "Cards" : Tabs[i];
                 if (GUI.Button(new Rect(x + 12 + column * tabWidth, y + 58, tabWidth - 3, 28),
                     (tab == i ? "[" + title + "]" : title)))
                 {
@@ -366,6 +369,12 @@ internal sealed class ModMenu
                 return;
             }
 
+            if (tab == 10)
+            {
+                if (RecurringCardsEnabled) RecurringCards.Draw(x, y, width, height);
+                return;
+            }
+
             var modules = new List<MenuModule>();
             foreach (var m in plugin.MenuModules)
                 if (MenuModuleVisibility.IsVisible(m.Id, developerMode.Value)) modules.Add(m);
@@ -385,13 +394,26 @@ internal sealed class ModMenu
                 }
                 catch (Exception ex) { message = "Could not save Hero Forms setting; see BepInEx log."; log.LogWarning(ex.Message); }
             }
-            if (modules.Count == 0) Label(174, "No visible modules installed.");
-            int rows = Math.Max(1, (int)((height - 233) / 49));
+            Label(174, "Recurring Cards");
+            GUI.Label(new Rect(x + 15, y + 196, width - 120, 23), (recurringCardsEnabled.Value ? "ON" : "OFF") + " | Live; House rules needed");
+            if (GUI.Button(new Rect(x + width - 105, y + 181, 93, 27), recurringCardsEnabled.Value ? "Disable" : "Enable"))
+            {
+                try
+                {
+                    recurringCardsEnabled.Value = !recurringCardsEnabled.Value;
+                    if (!recurringCardsEnabled.Value) RecurringCards.ClearChoices();
+                    config.Save();
+                    message = recurringCardsEnabled.Value ? "Recurring Cards enabled." : "Recurring Cards disabled; choices cleared.";
+                }
+                catch (Exception ex) { message = "Could not save Recurring Cards setting."; log.LogWarning(ex.Message); }
+            }
+            if (modules.Count == 0) Label(223, "No visible modules installed.");
+            int rows = Math.Max(1, (int)((height - 282) / 49));
             int pages = Math.Max(1, (modules.Count + rows - 1) / rows);
             page = Math.Max(0, Math.Min(page, pages - 1));
             for (int i = 0; i < rows && page * rows + i < modules.Count; i++)
             {
-                var m = modules[page * rows + i]; float top = y + 174 + i * 49;
+                var m = modules[page * rows + i]; float top = y + 223 + i * 49;
                 GUI.Label(new Rect(x + 15, top, width - 120, 23), m.Name);
                 GUI.Label(new Rect(x + 15, top + 22, width - 120, 23), (plugin.IsRunning(m.Id) ? "Running" : "Not running") + " | Next launch: " + (m.Enabled.Value ? "enabled" : "disabled"));
                 if (GUI.Button(new Rect(x + width - 105, top + 7, 93, 27), m.Enabled.Value ? "Disable" : "Enable"))

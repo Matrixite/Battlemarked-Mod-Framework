@@ -34,6 +34,7 @@ public sealed class Plugin : BasePlugin
         string.IsNullOrEmpty(hash) ? "Game fingerprint unavailable" : "Unverified game build";
     internal bool DeveloperModeEnabled => menu?.DeveloperModeEnabled == true;
     internal bool HeroFormsEnabled => menu?.HeroFormsEnabled == true;
+    internal bool RecurringCardsEnabled => menu?.RecurringCardsEnabled == true;
     internal string GameVersion => gameVersion;
     internal string SceneName => lastScene?.Name ?? "unknown";
     internal void DrawMenu() => menu?.Draw();

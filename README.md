@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.32-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.33-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,12 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.33 — Recurring Cards
+
+In a verified disposable local solo campaign with House Rules running, press **F10 > Cards** (Recurring Cards). Use the hero arrows to choose a party member, then **Make recurring** beside any individual hand or backpack card. Click **Recurring: ON** to turn that choice off. Multiple card instances and multiple heroes may be selected independently. Selected consumables should remain in hand after playing, using the game's native one-turn cooldown; AP cost, targeting and effects remain unchanged. Naturally recurring and immediately reusable cards retain their native behavior. Scrapping still removes a card. Choices are for the current board and actual card instance only, not a permanent change to the card asset or saved deck. In **Mods**, disable Recurring Cards to clear choices and hide the tab; Developer mode and Hero Forms are not required.
+
+The experimental native hook reads the authoritative RequestHandlerPlayCard state and matches the live local hero, registered card and exact instance. It substitutes a distinct temporary CardDefinition clone with native SetCooldownOnUse(1) only in UpdateCardInstance.MoveNext, then restores the private coroutine reference and destroys the clone. No global registry asset is edited, no extra cards are granted. The F10 tab marks selected cards; native printed card icons are unchanged. Windows gameplay and compiler verification are pending.
 
 ## v0.6.32 — Hero Forms for the whole party
 

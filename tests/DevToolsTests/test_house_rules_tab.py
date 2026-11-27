@@ -9,7 +9,7 @@ class HouseRulesTabTests(unittest.TestCase):
         menu = (SRC / "ModMenu.cs").read_text()
         definition = re.search(r'string\[\] Tabs = \{ (.*?) \};', menu).group(1)
         labels = [x.strip() for x in definition.split(",")]
-        self.assertEqual(labels, ['"Overview"', '"House Rules"', 'null', '"Presets"', '"Mods"', '"Reports"', '"Updates"', '"Dev Tools"', '"Level Editor"', '"Hero Forms"'])
+        self.assertEqual(labels, ['"Overview"', '"House Rules"', 'null', '"Presets"', '"Mods"', '"Reports"', '"Updates"', '"Dev Tools"', '"Level Editor"', '"Hero Forms"', '"Recurring Cards"'])
         policy = (SRC / "MenuModuleVisibility.cs").read_text()
         self.assertIn('if (title == null) return false;', policy)
         self.assertIn('if (title == "House Rules" || title == "Presets") return houseRulesEnabled;', policy)
