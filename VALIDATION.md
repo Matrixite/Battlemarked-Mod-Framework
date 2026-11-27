@@ -1,4 +1,10 @@
-# v0.6.29-alpha validation
+# v0.6.30-alpha validation
+
+## v0.6.30 enemy form deck
+
+Four new source regressions fail before implementation and pass with registered form-card lookup, bounded traversal of explicitly referenced boss AI cards, one-use native spawn identity checks, and staging/publishing the new piece's complete hand. Native metadata and disassembly confirm PieceDefinition.Cards feeds the spawn inventory, Inventory.TryAddCard considers inventory tags/capacity, CardInventory.TryAdd accepts the bypass-capacity flag and creates a Hand CardState, SpawnData.pieceToReplace carries the old piece ID, and SpawnPieces calls SpawnPieceInternal before PieceSnapshot.FromPiece. The non-VR card presenter reads the shown piece's own Inventory.Cards. All 53 Python Dev Tools/release checks pass. No dotnet or Windows game interop/runtime is available here; neither compilation nor native cards being playable has been verified.
+
+Windows acceptance: start a disposable local solo campaign, transform into a basic enemy, inspect the attack/ability hand and use a card. Test a large scripted boss with fixed-card AI, then inspect targeting, AP and turn order; the original hero's saved inventory should survive native revert. Verify that native hero-to-hero forms, ordinary spawned enemies and multiplayer are unaffected; cancel an unconsumed request and change level during selection; check a creature with no defined cards and a rejected hook. Check the toolbar and BepInEx LogOutput.log for the registered-card count or error. Do not interpret a successful deck creation message as proof that every AI-scripted card is playable.
 
 ## v0.6.29 large Hero Forms
 

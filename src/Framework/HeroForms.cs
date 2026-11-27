@@ -99,6 +99,7 @@ internal static class HeroForms
             context.Patches.Patch(process, prefix: Hook(nameof(CaptureSwap)));
             context.Patches.Patch(handle, prefix: Hook(nameof(HandleCommand)));
             ctx = context;
+            HeroFormCards.Attach(context);
             Status = "Hero forms ready for a new disposable solo campaign.";
             context.Log.LogInfo("BMF hero forms: native request and transformation capture hooks attached.");
         }
@@ -109,9 +110,11 @@ internal static class HeroForms
             context.Log.LogWarning("BMF " + Status);
         }
     }
+    internal static void ReportCardDeck(string message) { Status = message; }
     internal static void Cancel() { pending = null; }
     internal static void Stop()
     {
+        HeroFormCards.Stop();
         Cancel(); handlers.Clear(); helpers.Clear(); transform = null; ctx = null;
     }
     private static void CaptureHandler(object __1, object __result)
@@ -226,7 +229,7 @@ internal static class HeroForms
                 Cancel(); Status = "Native transformation request not observed (timed out).";
                 ctx?.Log.LogWarning("BMF hero forms: " + Status);
             }
-            return pending != null;
+            return pending != null || HeroFormCards.Waiting;
         }
     }
 
@@ -261,7 +264,7 @@ internal static class HeroForms
         try { send.Invoke(live.Room, new[] { request }); }
         catch { Cancel(); throw; }
         ctx.Log.LogInfo("BMF hero forms: request submitted for " + definition.name);
-        return Status;
+        return "Hero form request submitted; waiting for native handler.";
     }
 
     private static bool HandleCommand(object __instance, object __0, ref Il2CppSystem.Collections.IEnumerator __result)
@@ -298,18 +301,20 @@ internal static class HeroForms
             if (registered == null || registered != command.Definition || Key(id) != command.Destination)
                 throw new InvalidOperationException("Native form definition changed.");
             ValidateFormFit(board, piece, registered);
+            string deckStatus = HeroFormCards.Arm(live, state, helper, piece, registered);
             // Keep owner, Players team and real sheet. Native transformation
             // manages despawn, turn queue, form record, card/trait rules and events.
             __result = transform.Invoke(helper, new[] { piece, id, Get(piece, "ownerId"), Get(piece, "team"),
                 (object)true, Get(piece, "characterSheetId"), true, true, null }) as Il2CppSystem.Collections.IEnumerator;
             if (__result == null) throw new InvalidOperationException("Native transform coroutine unavailable.");
-            Status = "Native transform accepted. Check movement, cards and turn order.";
+            Status = deckStatus;
             ctx.Log.LogInfo("BMF hero forms: native transformation coroutine returned for " + command.Definition.name);
             return false;
         }
         catch (Exception ex)
         {
             pending = null;
+            HeroFormCards.CancelArmed();
             Status = "Hero form rejected: " + ex.GetBaseException().Message;
             ctx?.Log.LogWarning("BMF " + Status);
             return true;
