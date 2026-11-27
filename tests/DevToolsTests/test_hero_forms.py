@@ -45,7 +45,7 @@ class HeroFormTests(unittest.TestCase):
         policy = (SRC / "MenuModuleVisibility.cs").read_text()
         self.assertIn('"Level Editor", "Hero Forms"', menu)
         self.assertIn('if (title == "Hero Forms") return heroFormsEnabled;', policy)
-        self.assertIn('houseRulesEnabled, heroFormsEnabled.Value, recurringCardsEnabled.Value)', menu)
+        self.assertIn('houseRulesEnabled, heroFormsEnabled.Value, recurringCardsEnabled.Value, handSizeEnabled.Value)', menu)
         self.assertIn('config.Bind("Menu", "HeroFormsEnabled"', menu)
         toggle = menu[menu.index('if (GUI.Button', menu.index('Label(125, "Hero forms')):menu.index('int rows', menu.index('Label(125, "Hero forms'))]
         self.assertIn('heroFormsEnabled.Value = !heroFormsEnabled.Value', toggle)

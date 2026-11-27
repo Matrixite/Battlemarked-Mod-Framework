@@ -1,4 +1,12 @@
-# v0.6.34-alpha validation
+# v0.6.35-alpha validation
+
+## v0.6.35 adjustable Hand Size
+
+Verified the supplied GameAssembly.dll matches CoreLogicProbe.VerifiedHash. Metadata identifies Jade.GameModel.CardInventory.get_Capacity(): int (token 0x06000368), get_Full(): bool (0x06000367), CardSource.Hand/Backpack, both TryAdd overloads, and RequestHandlerSpawnPiece(PieceSpawner). Native disassembly confirms the capacity property converts the linked capacity stat's value to an integer, fullness compares native count against the underlying stat (capacity is inlined), both TryAdd overloads call get_Full at 0x182279180, and Inventory.TryAddCard calls the four-argument TryAdd. A getter-only capacity patch would therefore not suffice. The new module captures the simulation state from the verified spawn-handler constructor, checks current live local ownership/session/board and native hand identity before overriding both results, and uses bounded reflection loops and ordinary managed policy code. Explicit capacity bypasses and unrelated inventories remain native.
+
+Three source regressions failed before implementation and pass afterward; all 65 Python Dev Tools/release checks pass. The .NET core test suite adds range, fullness, session-match and independent tab visibility checks but is not executable in this environment (no dotnet or Windows interop SDK). No live game or compilation success is claimed.
+
+Acceptance: start a disposable verified local solo campaign, enable the independent Hand Size switch, select 12, and acquire cards on multiple heroes past the old native limit; verify normal acquisition stops at the new cap and backpack capacity remains unchanged. Lower below the existing count without removing cards; check ordinary additions stop, spend cards until below the cap and add again. Disable the mod, check native limits resume and the tab hides; re-enable, confirm saved selection and test after changing heroes, taking a Hero Form, changing levels, restarting, and starting a different campaign. Confirm unrelated enemies, multiplayer and unverified game builds remain unchanged. Existing explicit capacity-bypass actions are not modified. Check BepInEx log for "BMF Hand Size" if the hook does not attach or apply. Inlined UI capacity reads may retain the native displayed value.
 
 ## v0.6.34 build compatibility
 

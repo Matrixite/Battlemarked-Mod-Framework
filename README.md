@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.34-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.35-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,12 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.35 — Adjustable Hand Size
+
+In **F10 > Mods**, enable **Hand Size** to reveal its tab. Select a maximum from 1–30 cards (initially 12); it applies to all locally owned party heroes on a verified local solo board, including eligible Hero Forms. The selected limit and switch are saved, changes apply live, and disabling the mod hides its tab and restores the game's original capacity queries. Requires the House Rules module to be running; Recurring Cards and Developer mode are not required.
+
+The mod hooks both native CardInventory capacity and fullness queries. Both native TryAdd overloads consult the fullness query, and the ordinary card-acquisition path uses those overloads. The checks require a matching live hero hand or a matching authoritative simulation copy in the same session. No base stat, inventory contents, card definitions, backpack capacity or save files are edited by this mod. Lowering the limit or disabling does not remove cards; subsequent ordinary additions are subject to the active rules. Native explicit capacity bypasses (e.g. creating a Hero Form deck) remain unchanged. UI elements that inline the native capacity stat may still display the original capacity. Windows compilation and live gameplay are pending; test on a disposable local solo campaign.
 
 ## v0.6.34 — Recurring Cards build compatibility
 

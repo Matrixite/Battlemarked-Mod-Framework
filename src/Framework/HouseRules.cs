@@ -374,6 +374,7 @@ internal sealed class HouseRules : BattlemarkedModule
             catch (Exception ex) { ctx.Log.LogWarning("Optional level editor spawn capture: " + ex.Message); }
             HeroForms.Attach(ctx);
             RecurringCards.Attach(ctx);
+            HandSize.Attach(ctx);
             EnemyMover.Attach(ctx);
             // Capture the currently ticking desktop board interaction handler.
             // Read-only; no patch changes normal mouse input or game rules.
@@ -782,14 +783,19 @@ internal sealed class HouseRules : BattlemarkedModule
     internal static bool TryGetRecurringCardsContext(out LevelEditor.Context context, out string reason) =>
         TryGetEditorContext(false, out context, out reason, recurring: true);
 
-    private static bool TryGetEditorContext(bool heroForms, out LevelEditor.Context context, out string reason, bool recurring = false)
+    internal static bool TryGetHandSizeContext(out LevelEditor.Context context, out string reason) =>
+        TryGetEditorContext(false, out context, out reason, handSize: true);
+
+    private static bool TryGetEditorContext(bool heroForms, out LevelEditor.Context context, out string reason, bool recurring = false, bool handSize = false)
     {
         context = null;
-        reason = recurring ? "Start a local solo campaign with House rules running and Recurring Cards enabled." :
+        reason = handSize ? "Start a local solo campaign with House rules running and Hand Size enabled." :
+            recurring ? "Start a local solo campaign with House rules running and Recurring Cards enabled." :
             heroForms ? "Start a local solo campaign with House rules running and Hero Forms enabled." :
             "Start a local solo campaign with House rules and Developer mode enabled.";
         var r = running;
-        if (r == null || r.faulted || !(recurring ? Plugin.Instance?.RecurringCardsEnabled == true : EditorFeatureEnabled(heroForms)) ||
+        if (r == null || r.faulted || !(handSize ? Plugin.Instance?.HandSizeEnabled == true :
+            recurring ? Plugin.Instance?.RecurringCardsEnabled == true : EditorFeatureEnabled(heroForms)) ||
             Plugin.Instance?.VerifiedGame != true || Environment.CurrentManagedThreadId != r.mainThread ||
             !r.modelFromHud || HouseRules.model == null) return false;
         try
@@ -834,6 +840,13 @@ internal sealed class HouseRules : BattlemarkedModule
             return true;
         }
         catch (Exception ex) { context = null; reason = ex.GetBaseException().Message; return false; }
+    }
+
+    internal static bool TryValidateHandSizeHero(LevelEditor.Context context, object piece, out string reason)
+    {
+        if (!TryGetHandSizeContext(out var live, out reason) || context == null || !context.SameSession(live)) return false;
+        try { reason = running.Scope(piece); return reason == "local solo hero"; }
+        catch (Exception ex) { reason = ex.GetBaseException().Message; return false; }
     }
 
     internal static bool TryValidateRecurringHero(LevelEditor.Context context, object piece, out string reason)
@@ -1245,5 +1258,5 @@ internal sealed class HouseRules : BattlemarkedModule
         }
         catch (Exception ex) { ctx.Log.LogWarning("House rules report: " + ex.Message); }
     }
-    public override void OnStop() { EnemyMover.Stop(); HeroForms.Stop(); RecurringCards.Stop(); debugCardRegistries.Clear(); debugSpawnContexts.Clear(); debugBoardHandler = null; health?.CancelForTransition("Module stopped"); LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); health?.Write(); }
+    public override void OnStop() { EnemyMover.Stop(); HeroForms.Stop(); RecurringCards.Stop(); HandSize.Stop(); debugCardRegistries.Clear(); debugSpawnContexts.Clear(); debugBoardHandler = null; health?.CancelForTransition("Module stopped"); LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); health?.Write(); }
 }

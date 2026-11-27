@@ -3,13 +3,14 @@ namespace Battlemarked.ModFramework;
 // Presentation only: never use this policy to start, stop or report modules.
 internal static class MenuModuleVisibility
 {
-    internal static bool IsTabVisible(string title, bool developerMode, bool houseRulesEnabled, bool heroFormsEnabled = true, bool recurringCardsEnabled = true)
+    internal static bool IsTabVisible(string title, bool developerMode, bool houseRulesEnabled, bool heroFormsEnabled = true, bool recurringCardsEnabled = true, bool handSizeEnabled = false)
     {
         if (title == null) return false; // Reserved tab IDs are not shown.
         if (title == "Reports" || title == "Dev Tools") return developerMode;
         if (title == "Level Editor") return developerMode;
         if (title == "Hero Forms") return heroFormsEnabled;
         if (title == "Recurring Cards") return recurringCardsEnabled;
+        if (title == "Hand Size") return handSizeEnabled;
         if (title == "House Rules" || title == "Presets") return houseRulesEnabled;
         return true;
     }

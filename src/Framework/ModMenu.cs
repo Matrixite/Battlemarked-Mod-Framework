@@ -20,16 +20,16 @@ internal sealed class ModMenu
     private readonly DebugWorkspace debugWorkspace;
     private readonly LevelEditor levelEditor;
     private readonly ManualLogSource log;
-    private readonly ConfigEntry<bool> enabled, developerMode, heroFormsEnabled, recurringCardsEnabled;
+    private readonly ConfigEntry<bool> enabled, developerMode, heroFormsEnabled, recurringCardsEnabled, handSizeEnabled;
     private readonly ConfigFile config;
-    private readonly ConfigEntry<int> savedX, savedY;
+    private readonly ConfigEntry<int> savedX, savedY, maxHandSize;
     private readonly MenuPosition position;
     private bool open, broken, guiSeen, usingPolling;
     private int page;
     private int tab;
     private bool healthRulesPage;
     // Slot 2 is reserved (former Health tab) so all other tab IDs stay stable.
-    private static readonly string[] Tabs = { "Overview", "House Rules", null, "Presets", "Mods", "Reports", "Updates", "Dev Tools", "Level Editor", "Hero Forms", "Recurring Cards" };
+    private static readonly string[] Tabs = { "Overview", "House Rules", null, "Presets", "Mods", "Reports", "Updates", "Dev Tools", "Level Editor", "Hero Forms", "Recurring Cards", "Hand Size" };
     private string message = "Settings apply on next launch.";
     private Func<bool> poll;
     private bool inputChecked;
@@ -51,10 +51,23 @@ internal sealed class ModMenu
         developerMode = config.Bind("Menu", "DeveloperMode", false, "Show built-in diagnostic and example modules, Reports, Dev Tools and Level Editor. Disabling also closes a native debug menu opened through BMF; module settings are unchanged.");
         heroFormsEnabled = config.Bind("Menu", "HeroFormsEnabled", true, "Show the experimental Hero Forms tab and allow verified local transformations. Running House rules are required; Developer mode is not needed. Applies immediately.");
         recurringCardsEnabled = config.Bind("Menu", "RecurringCardsEnabled", true, "Enable per-card recurring choices on verified local solo boards. Requires running House rules; choices are session-only.");
+        handSizeEnabled = config.Bind("Menu", "HandSizeEnabled", false, "Override the hand capacity for verified local solo heroes. Requires running House rules; applies live.");
+        maxHandSize = config.Bind("Menu", "MaxHandSize", 12, "Maximum cards in a hero hand (1–30) while Hand Size is enabled.");
         open = config.Bind("Menu", "StartOpen", false, "Open menu automatically; fallback if F10 is unavailable.").Value;
         savedX = config.Bind("Menu", "PositionX", -1, "Last menu left position in pixels; -1 centers horizontally.");
         savedY = config.Bind("Menu", "PositionY", -1, "Last menu top position in pixels; -1 centers vertically.");
         position = new MenuPosition(savedX.Value, savedY.Value);
+    }
+    private void ChangeHandSize(int delta) => SaveHandSize(MaxHandSize + delta);
+    private void SaveHandSize(int value)
+    {
+        try
+        {
+            maxHandSize.Value = HandSizePolicy.Clamp(value);
+            config.Save();
+            message = "Hand Size saved: " + MaxHandSize + ".";
+        }
+        catch (Exception ex) { message = "Could not save Hand Size limit."; log.LogWarning(ex.Message); }
     }
     private void ResolveInput()
     {
@@ -132,6 +145,8 @@ internal sealed class ModMenu
     internal bool DeveloperModeEnabled => developerMode.Value && enabled.Value && !broken;
     internal bool HeroFormsEnabled => heroFormsEnabled.Value && enabled.Value && !broken;
     internal bool RecurringCardsEnabled => recurringCardsEnabled.Value && enabled.Value && !broken;
+    internal bool HandSizeEnabled => handSizeEnabled.Value && enabled.Value && !broken;
+    internal int MaxHandSize => HandSizePolicy.Clamp(maxHandSize.Value);
     internal void Tick()
     {
         if (!developerMode.Value) nativeDebugMenu.CloseOwned();
@@ -203,14 +218,14 @@ internal sealed class ModMenu
             bool houseRulesEnabled = plugin.IsEnabledForNextLaunch(HouseRules.ModuleId);
             var visibleTabs = new List<int>();
             for (int i = 0; i < Tabs.Length; i++)
-                if (MenuModuleVisibility.IsTabVisible(Tabs[i], developerMode.Value, houseRulesEnabled, heroFormsEnabled.Value, recurringCardsEnabled.Value)) visibleTabs.Add(i);
+                if (MenuModuleVisibility.IsTabVisible(Tabs[i], developerMode.Value, houseRulesEnabled, heroFormsEnabled.Value, recurringCardsEnabled.Value, handSizeEnabled.Value)) visibleTabs.Add(i);
             if ((tab == 8 || tab == 9) && !visibleTabs.Contains(tab)) levelEditor.Leave();
             if (!visibleTabs.Contains(tab)) tab = 4; // Mods, where developer mode can be restored.
             float tabWidth = (width - 24) / visibleTabs.Count;
             for (int column = 0; column < visibleTabs.Count; column++)
             {
                 int i = visibleTabs[column];
-                string title = i == 8 && width < 700 ? "Editor" : i == 9 && width < 700 ? "Forms" : i == 10 ? "Cards" : Tabs[i];
+                string title = i == 8 && width < 700 ? "Editor" : i == 9 && width < 700 ? "Forms" : i == 10 ? "Cards" : i == 11 && width < 700 ? "Hand" : Tabs[i];
                 if (GUI.Button(new Rect(x + 12 + column * tabWidth, y + 58, tabWidth - 3, 28),
                     (tab == i ? "[" + title + "]" : title)))
                 {
@@ -375,6 +390,23 @@ internal sealed class ModMenu
                 return;
             }
 
+            if (tab == 11)
+            {
+                Label(95, "Hand Size | Verified local solo heroes");
+                Label(130, "Maximum cards per hero hand: " + MaxHandSize);
+                if (Small(162, 15, 65, "-5")) ChangeHandSize(-5);
+                if (Small(162, 85, 65, "-1")) ChangeHandSize(-1);
+                if (Small(162, 155, 65, "+1")) ChangeHandSize(1);
+                if (Small(162, 225, 65, "+5")) ChangeHandSize(5);
+                if (Small(162, 295, 100, "Reset (12)")) SaveHandSize(HandSizePolicy.Default);
+                Label(209, "Applies live to the whole party; backpack is unchanged.");
+                Label(239, "Lower limits do not delete held cards; normal additions stop at the limit.");
+                Label(269, "Disable Hand Size in Mods to restore normal capacity rules.");
+                Label(303, HandSize.Status);
+                Label(334, message);
+                return;
+            }
+
             var modules = new List<MenuModule>();
             foreach (var m in plugin.MenuModules)
                 if (MenuModuleVisibility.IsVisible(m.Id, developerMode.Value)) modules.Add(m);
@@ -407,13 +439,25 @@ internal sealed class ModMenu
                 }
                 catch (Exception ex) { message = "Could not save Recurring Cards setting."; log.LogWarning(ex.Message); }
             }
-            if (modules.Count == 0) Label(223, "No visible modules installed.");
-            int rows = Math.Max(1, (int)((height - 282) / 49));
+            Label(223, "Hand Size");
+            GUI.Label(new Rect(x + 15, y + 245, width - 120, 23), (handSizeEnabled.Value ? "ON" : "OFF") + " | Live; max " + MaxHandSize + " | House rules needed");
+            if (GUI.Button(new Rect(x + width - 105, y + 230, 93, 27), handSizeEnabled.Value ? "Disable" : "Enable"))
+            {
+                try
+                {
+                    handSizeEnabled.Value = !handSizeEnabled.Value;
+                    config.Save();
+                    message = handSizeEnabled.Value ? "Hand Size enabled; tab available now." : "Hand Size disabled; normal capacity restored.";
+                }
+                catch (Exception ex) { message = "Could not save Hand Size setting."; log.LogWarning(ex.Message); }
+            }
+            if (modules.Count == 0) Label(272, "No visible modules installed.");
+            int rows = Math.Max(1, (int)((height - 331) / 49));
             int pages = Math.Max(1, (modules.Count + rows - 1) / rows);
             page = Math.Max(0, Math.Min(page, pages - 1));
             for (int i = 0; i < rows && page * rows + i < modules.Count; i++)
             {
-                var m = modules[page * rows + i]; float top = y + 223 + i * 49;
+                var m = modules[page * rows + i]; float top = y + 272 + i * 49;
                 GUI.Label(new Rect(x + 15, top, width - 120, 23), m.Name);
                 GUI.Label(new Rect(x + 15, top + 22, width - 120, 23), (plugin.IsRunning(m.Id) ? "Running" : "Not running") + " | Next launch: " + (m.Enabled.Value ? "enabled" : "disabled"));
                 if (GUI.Button(new Rect(x + width - 105, top + 7, 93, 27), m.Enabled.Value ? "Disable" : "Enable"))

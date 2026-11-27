@@ -65,6 +65,26 @@ foreach (bool recurringCardsEnabled in new[] { false, true })
     Check(MenuModuleVisibility.IsTabVisible("Hero Forms", developerMode, houseRulesEnabled, heroFormsEnabled, recurringCardsEnabled) ==
         heroFormsEnabled, "Recurring Cards switch does not hide Hero Forms");
 }
+foreach (bool developerMode in new[] { false, true })
+foreach (bool houseRulesEnabled in new[] { false, true })
+foreach (bool handSizeEnabled in new[] { false, true })
+{
+    Check(MenuModuleVisibility.IsTabVisible("Hand Size", developerMode, houseRulesEnabled, true, true, handSizeEnabled) ==
+        handSizeEnabled, "Hand Size follows only its own switch");
+    Check(MenuModuleVisibility.IsTabVisible("Recurring Cards", developerMode, houseRulesEnabled, true, true, handSizeEnabled),
+        "Hand Size does not hide Recurring Cards");
+}
+Check(HandSizePolicy.Clamp(int.MinValue) == 1 && HandSizePolicy.Clamp(int.MaxValue) == 30, "hand size bounds");
+for (int cap = 1; cap <= 30; cap++)
+{
+    Check(!HandSizePolicy.IsFull(cap - 1, cap), "can add below hand limit");
+    Check(HandSizePolicy.IsFull(cap, cap), "full exactly at hand limit");
+    Check(HandSizePolicy.IsFull(cap + 1, cap), "overfull after lowering; no extra card granted");
+}
+Check(HandSizePolicy.MatchesSession("a", 1, "a", 1), "same simulation session");
+Check(!HandSizePolicy.MatchesSession("a", 1, "b", 1), "reject different session");
+Check(!HandSizePolicy.MatchesSession("a", 1, "a", 2), "reject different host");
+Check(!HandSizePolicy.MatchesSession("", 1, "", 1), "reject missing session identity");
 Check(UpdatePolicy.ForDisplay("Checking for updates...", "Update status unavailable") == "Checking for updates...", "normal status preserved");
 Check(UpdatePolicy.ForDisplay("Update failed: GITHUB.com unavailable", "Update failed; see reports") == "Update failed; see reports", "provider in status hidden");
 Check(UpdatePolicy.ForDisplay("Update failed: raw.githubusercontent.com", "Update failed; see reports") == "Update failed; see reports", "provider host hidden");
