@@ -27,7 +27,9 @@ internal sealed class ModMenu
     private bool open, broken, guiSeen, usingPolling;
     private int page;
     private int tab;
-    private static readonly string[] Tabs = { "Overview", "AP rules", "Health", "Presets", "Mods", "Reports", "Updates", "Dev Tools", "Level Editor", "Hero Forms" };
+    private bool healthRulesPage;
+    // Slot 2 is reserved (former Health tab) so all other tab IDs stay stable.
+    private static readonly string[] Tabs = { "Overview", "House Rules", null, "Presets", "Mods", "Reports", "Updates", "Dev Tools", "Level Editor", "Hero Forms" };
     private string message = "Settings apply on next launch.";
     private Func<bool> poll;
     private bool inputChecked;
@@ -234,40 +236,46 @@ internal sealed class ModMenu
             }
             if (tab == 1)
             {
-                Label(97, "Extra action points | Selected profile: " + HouseRules.PresetName);
-                Label(128, "Active: +" + HouseRules.ActiveBonus + " AP");
-                if (HouseRules.CanConfigure)
+                float ruleWidth = (width - 36) / 2f;
+                if (Small(92, 15, ruleWidth, healthRulesPage ? "AP Rules" : "[AP Rules]")) healthRulesPage = false;
+                if (Small(92, 21 + ruleWidth, ruleWidth, healthRulesPage ? "[Health]" : "Health")) healthRulesPage = true;
+
+                if (!healthRulesPage)
                 {
-                    if (Small(157, 15, 80, "-1 AP")) HouseRules.ChangeBonus(-1);
-                    if (Small(157, 103, 80, "+1 AP")) HouseRules.ChangeBonus(1);
-                    if (Small(157, 191, 100, "Disable")) HouseRules.ChangeBonus(-3);
+                    Label(124, "Extra action points | Selected profile: " + HouseRules.PresetName);
+                    Label(150, "Active: +" + HouseRules.ActiveBonus + " AP");
+                    if (HouseRules.CanConfigure)
+                    {
+                        if (Small(176, 15, 80, "-1 AP")) HouseRules.ChangeBonus(-1);
+                        if (Small(176, 103, 80, "+1 AP")) HouseRules.ChangeBonus(1);
+                        if (Small(176, 191, 100, "Disable")) HouseRules.ChangeBonus(-3);
+                    }
+                    Label(206, HouseRules.Status);
+                    Label(230, HouseRules.Counts);
+                    Label(254, "Target: " + (2 + HouseRules.ActiveBonus) + (HouseRules.ActiveRefundMode ? " one-AP actions; cap unchanged." : " AP (normal hero)."));
+                    if (HouseRules.CanConfigure && Button(278, "Include existing AP caps: " + (HouseRules.ActiveAdjustExisting ? "ON" : "OFF"))) HouseRules.ToggleAdjustExisting();
+                    if (HouseRules.CanConfigure && Button(309, "AP refund mode: " + (HouseRules.ActiveRefundMode ? "ON" : "OFF") + (HouseRules.ModePending ? " (pending)" : ""))) HouseRules.ToggleRefundMode();
+                    Label(339, HouseRules.ModePending ? "Mode pending: return to main menu before next game." : "Bonus live; mode applies between adventures.");
+                    Label(367, "Existing cap mode can change saves. Prefer refunds.");
                 }
-                Label(190, HouseRules.Status);
-                Label(216, HouseRules.Counts);
-                Label(242, "Target: " + (2 + HouseRules.ActiveBonus) + (HouseRules.ActiveRefundMode ? " one-AP actions; cap unchanged." : " AP (normal hero)."));
-                if (HouseRules.CanConfigure && Button(270, "Include existing AP caps: " + (HouseRules.ActiveAdjustExisting ? "ON" : "OFF"))) HouseRules.ToggleAdjustExisting();
-                if (HouseRules.CanConfigure && Button(302, "AP refund mode: " + (HouseRules.ActiveRefundMode ? "ON" : "OFF") + (HouseRules.ModePending ? " (pending)" : ""))) HouseRules.ToggleRefundMode();
-                Label(334, HouseRules.ModePending ? "Mode pending: return to main menu before next game." : "Bonus live; mode applies between adventures.");
-                Label(365, "Existing cap mode can change saves. Prefer refunds.");
-                return;
-            }
-            if (tab == 2)
-            {
-                Label(97, "Native hero maximum health | fresh solo campaigns");
-                Label(128, "Next trial: " + HouseRules.NextHealthPercent + "% | 10 base HP -> " + HealthBudget.Target(10, HouseRules.NextHealthPercent));
-                if (HouseRules.CanConfigureHealth)
+                else
                 {
-                    if (Small(157, 15, 80, "-25%")) HouseRules.ChangeHealthPercent(-25);
-                    if (Small(157, 103, 80, "+25%")) HouseRules.ChangeHealthPercent(25);
-                    if (Small(157, 191, 100, "Normal")) HouseRules.ChangeHealthPercent(-100);
+                    Label(124, "Native hero maximum health | fresh solo campaigns");
+                    Label(150, "Next trial: " + HouseRules.NextHealthPercent + "% | 10 base HP -> " + HealthBudget.Target(10, HouseRules.NextHealthPercent));
+                    if (HouseRules.CanConfigureHealth)
+                    {
+                        if (Small(176, 15, 80, "-25%")) HouseRules.ChangeHealthPercent(-25);
+                        if (Small(176, 103, 80, "+25%")) HouseRules.ChangeHealthPercent(25);
+                        if (Small(176, 191, 100, "Normal")) HouseRules.ChangeHealthPercent(-100);
+                    }
+                    Label(206, HouseRules.HealthStatus);
+                    Label(232, HouseRules.HealthCounts);
+                    if (HouseRules.CanConfigureHealth && Button(259, HouseRules.NativeHealthRequested ? "Cancel / disarm health trial" : "Queue health for next NEW solo game")) HouseRules.ToggleNativeHealthArm();
+                    Label(291, "Leave the current game, queue, then start a new game.");
+                    Label(319, "Repeat with another fresh game; no restart required.");
+                    Label(345, "Existing or previously modified saves are not safe trials.");
+                    Label(373, "Report: hero-health-probe.txt");
                 }
-                Label(190, HouseRules.HealthStatus);
-                Label(220, HouseRules.HealthCounts);
-                if (HouseRules.CanConfigureHealth && Button(250, HouseRules.NativeHealthRequested ? "Cancel / disarm health trial" : "Queue health for next NEW solo game")) HouseRules.ToggleNativeHealthArm();
-                Label(285, "Leave the current game, queue, then start a new game.");
-                Label(315, "Repeat with another fresh game; no restart required.");
-                Label(345, "Existing or previously modified saves are not safe trials.");
-                Label(375, "Report: hero-health-probe.txt");
                 return;
             }
             if (tab == 3)

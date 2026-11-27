@@ -33,7 +33,7 @@ foreach (string id in new[] { "org.battlemarked.houserules", "org.example.custom
 Console.WriteLine("PASS: developer-mode menu visibility.");
 
 // Independent switches: developer mode controls Reports, the house-rules
-// enable preference controls AP, Health and Presets. Keep other tabs reachable.
+// enable preference controls House Rules and Presets. Keep other tabs reachable.
 foreach (bool developerMode in new[] { false, true })
 foreach (bool houseRulesEnabled in new[] { false, true })
 {
@@ -42,8 +42,8 @@ foreach (bool houseRulesEnabled in new[] { false, true })
     Check(MenuModuleVisibility.IsTabVisible("Reports", developerMode, houseRulesEnabled) == developerMode, "reports follows developer mode");
     Check(MenuModuleVisibility.IsTabVisible("Level Editor", developerMode, houseRulesEnabled) == developerMode, "level editor follows developer mode");
     Check(MenuModuleVisibility.IsTabVisible("Dev Tools", developerMode, houseRulesEnabled) == developerMode, "dev tools follows developer mode");
-    Check(MenuModuleVisibility.IsTabVisible("AP rules", developerMode, houseRulesEnabled) == houseRulesEnabled, "AP follows house-rules enabled preference");
-    Check(MenuModuleVisibility.IsTabVisible("Health", developerMode, houseRulesEnabled) == houseRulesEnabled, "health follows house-rules enabled preference");
+    Check(MenuModuleVisibility.IsTabVisible("House Rules", developerMode, houseRulesEnabled) == houseRulesEnabled, "combined House Rules follows module enabled preference");
+    Check(!MenuModuleVisibility.IsTabVisible(null, developerMode, houseRulesEnabled), "reserved former Health tab ID remains hidden");
     Check(MenuModuleVisibility.IsTabVisible("Presets", developerMode, houseRulesEnabled) == houseRulesEnabled, "presets follows house-rules enabled preference");
 }
 foreach (bool developerMode in new[] { false, true })

@@ -1,8 +1,12 @@
-# v0.6.25-alpha validation
+# v0.6.26-alpha validation
 
 ## First stable release automation
 
 The 12 Python release-gate and simulated publication tests pass locally. These cover the current alpha skip, exact stable-version eligibility, inconsistent version rejection, wrong branch refusal, mismatched tag refusal, versioned source archive and matching SHA-256 checksum, and repeated-run protection. The publication tests use a temporary local Git remote and mock GitHub CLI; they do not create a real release. The hosted workflow is configured to run the .NET 8 core tests before publication; dotnet and the Windows game environment are unavailable here. Real GitHub Actions execution and Windows/gameplay acceptance remain unverified. No framework version, gameplay behavior or updater code changes are included in this automation.
+
+## v0.6.26 combined House Rules tab
+
+Two new source checks fail against v0.6.25 and pass with the combined top-level House Rules tab, preserved other tab IDs and both sets of unchanged rule-control calls. Layout positions within each subpage fit the minimum supported height. CoreTests checks the combined tab follows the House rules module preference and the reserved old tab slot stays hidden. All 39 Python Dev Tools and release checks pass. The runner lacks dotnet and installed Windows interop assemblies; verify the new tab renders, its AP/Health selectors switch correctly, the existing controls work and the tab hides when House rules is disabled. No gameplay rule code changes.
 
 ## v0.6.25 independent Hero Forms visibility and request gate
 
