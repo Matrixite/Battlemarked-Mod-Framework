@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.20-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.21-alpha
 
 ## First stable release automation
 
@@ -8,13 +8,19 @@ The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates th
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
 
+## v0.6.21 — level editor enemy list correction
+
+The user confirmed the v0.6.20 update loads and the board/tile inspector works, but the enemy pane was empty with the "Tiles ready" registry-capture message. The editor now obtains the piece registry from the verified current HUD model, without requiring the matching spawn-handler constructor capture. Native metadata confirms `AffectedPiecesConfig` is a ScriptableObject: use the matching captured config when available, otherwise require an unambiguous live loaded config. Metadata also confirms `PieceAIBehaviourDefinition` is a native reference object, not a Unity asset; the old Unity-object test would reject every AI definition. The editor checks the correct native type and nonzero pointer instead.
+
+Press **Refresh board & enemies** in a local solo campaign. The status reports eligible/scanned/unreadable counts or the specific registry/config problem. Registration, hostile creature classification, 1×1 footprint, tile availability and native local-room checks are still required before a single normal spawn request. No direct writes or multiplayer scope changes. The two source regressions failed against v0.6.20 and pass with this correction; Windows compilation and actual enemy list/spawn acceptance are still pending.
+
 ## v0.6.20 — experimental runtime Level Editor
 
 Open **F10 > Mods**, ensure House rules is enabled and running, and turn **Developer mode ON before starting a new disposable local solo campaign**. In a loaded level, open **Level Editor** (labelled **Editor** on a smaller display) and click **Refresh board & enemies**. The map is a paged 8×8 window of the live board model: `.` free, `#` blocked, `P` occupied, `-` missing, `*` selected. Use X-/X+/Y-/Y+ to move the window; select a tile to inspect its coordinates, height, flags and occupancy.
 
 The enemy list contains eligible loaded, registered, non-player-controlled 1×1 hostile creatures with AI, classified by the current game spawner's registry and native piece qualities. Search by name or ID, select a free tile and enemy, then **Place selected enemy > Confirm enemy spawn**. The request runs once on Update, rechecks the current local solo HUD/room, tile and definition, and uses the game's normal RequestSpawnPiece pipeline; a submitted request is not proof of a successful spawn. Check the game and refresh again. No action runs automatically, and multiplayer/unverified scope is rejected.
 
-This is a runtime inspection and placement prototype, not the original Unity level authoring tool. No terrain editing, deleting pieces, entrance/exit editing, map saving/export/import, or custom-level creation is implemented. Do not use on valued campaigns; back up saves. If the enemy registry was not captured, start another new solo campaign with developer mode already on. Native binding errors are reported in the editor/BepInEx log. Windows installation and in-game acceptance remain pending.
+This is a runtime inspection and placement prototype, not the original Unity level authoring tool. No terrain editing, deleting pieces, entrance/exit editing, map saving/export/import, or custom-level creation is implemented. Do not use on valued campaigns; back up saves. The v0.6.20 constructor capture requirement is superseded by the v0.6.21 HUD registry correction above. Native binding errors are reported in the editor/BepInEx log. Windows installation and in-game acceptance remain pending.
 
 ## v0.6.19 — fix debug guard build error
 

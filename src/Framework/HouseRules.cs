@@ -731,12 +731,23 @@ internal sealed class HouseRules : BattlemarkedModule
             var tileSet = DebugWorkspace.ReadMember(board, "tileSet") as Il2CppObjectBase;
             if (tileSet == null || tileSet.Pointer == IntPtr.Zero || room is not Il2CppObjectBase nativeRoom || nativeRoom.Pointer == IntPtr.Zero)
             { reason = "Tile set or native room identity unavailable."; return false; }
+            // The current HUD model has its own live definition registry.
+            // Do not require a constructor capture from a possibly distinct
+            // simulation GameState to inspect or validate registered enemies.
+            Il2CppObjectBase registry = null;
+            try
+            {
+                var candidate = DebugWorkspace.ReadMember(capturedModel, "pieceRegistry") as Il2CppObjectBase;
+                if (candidate != null && candidate.Pointer != IntPtr.Zero &&
+                    candidate.GetType().FullName == "Jade.GameDefinitions.PieceRegistry") registry = candidate;
+            }
+            catch (Exception ex) { r.ctx.Log.LogWarning("Level editor HUD registry unavailable: " + ex.GetBaseException().Message); }
             object spawner = null;
             if (r.debugSpawnContexts.TryGetValue(state.Pointer, out var capture)) spawner = capture.Spawner;
             if (!ReferenceEquals(HouseRules.model, capturedModel) || !ReferenceEquals(running, r) ||
                 key == IntPtr.Zero || r.modelKey != key || SceneManager.GetActiveScene().handle != scene.handle)
             { reason = "Session changed."; return false; }
-            context = new LevelEditor.Context(scene.handle, key, state, board, tileSet, room, spawner);
+            context = new LevelEditor.Context(scene.handle, key, state, board, tileSet, room, registry, spawner);
             reason = "Verified local solo board.";
             return true;
         }

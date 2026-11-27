@@ -17,6 +17,30 @@ class LevelEditorTests(unittest.TestCase):
             self.assertIn(check, guard)
         self.assertNotIn('r.model,', guard)
 
+    def test_current_hud_registry_does_not_require_spawn_constructor_capture(self):
+        rules = (SRC / "HouseRules.cs").read_text()
+        guard = rules[rules.index('internal static bool TryGetLevelEditorContext'):rules.index('internal static bool TryGetDebugRoomForPieceId')]
+        editor = (SRC / "LevelEditor.cs").read_text()
+        # Native HeroSelectModel has a pieceRegistry field. A missing spawner
+        # capture must not prevent the already-verified current HUD registry from being used.
+        self.assertIn('ReadMember(capturedModel, "pieceRegistry")', guard)
+        scan = editor[editor.index('private void Scan(bool full)'):editor.index('private static bool ValidateEnemy')]
+        self.assertNotIn('if (live.Spawner == null)', scan)
+        self.assertIn('ResolveConfig(live)', scan)
+        self.assertIn('Jade.GameTags.AffectedPiecesConfig', editor)
+        self.assertIn('Ambiguous affected-pieces config', editor)
+
+    def test_ai_definition_is_native_object_not_unity_asset(self):
+        editor = (SRC / "LevelEditor.cs").read_text()
+        # Verified IL2CPP metadata: PieceAIBehaviourDefinition derives
+        # System.Object, not UnityEngine.Object. The old check rejected every AI.
+        validate = editor[editor.index('private static bool ValidateEnemy'):editor.index('private void ScanEnemies')]
+        self.assertNotIn('is not UObject ai', validate)
+        self.assertIn('Jade.GameDefinitions.PieceAIBehaviourDefinition', validate)
+        self.assertIn('ai.Pointer == IntPtr.Zero', validate)
+        self.assertIn('GetPieceDefinition', validate)
+        self.assertIn('EnemyOfPlayers', validate)
+
     def test_board_snapshot_and_single_request(self):
         editor = (SRC / "LevelEditor.cs").read_text()
         self.assertIn('WindowSize = 8', editor)

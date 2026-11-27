@@ -1,8 +1,12 @@
-# v0.6.20-alpha validation
+# v0.6.21-alpha validation
 
 ## First stable release automation
 
 The 12 Python release-gate and simulated publication tests pass locally. These cover the current alpha skip, exact stable-version eligibility, inconsistent version rejection, wrong branch refusal, mismatched tag refusal, versioned source archive and matching SHA-256 checksum, and repeated-run protection. The publication tests use a temporary local Git remote and mock GitHub CLI; they do not create a real release. The hosted workflow is configured to run the .NET 8 core tests before publication; dotnet and the Windows game environment are unavailable here. Real GitHub Actions execution and Windows/gameplay acceptance remain unverified. No framework version, gameplay behavior or updater code changes are included in this automation.
+
+## v0.6.21 level editor empty enemy list
+
+User screenshot shows BMF 0.6.20 in a loaded verified board, 8×8 tile grid, selected tile (0,7) and zero enemies. The exact status is the branch for no matching spawner capture. The precise reason the constructor capture was absent cannot be determined from the screenshot alone. Metadata proves HeroSelectModel has a live pieceRegistry field; AffectedPiecesConfig derives UnityEngine.ScriptableObject; PieceAIBehaviourDefinition derives System.Object. The previous AI check would independently reject valid non-Unity native reference objects. Use the HUD registry in the already-verified context and an exact matching or unambiguous loaded config, then revalidate registration, native classification, room and registry identity for dispatch. New source contract regressions fail before the fix and pass afterward; all 27 Python source/release tests pass. No Windows SDK/interop assemblies or live game available here. Acceptance: update to 0.6.21, enter disposable local solo, refresh, confirm a nonzero eligible count; select one free tile and eligible enemy, confirm once, observe actual result. If count remains zero, collect status text and BepInEx LogOutput.log to identify the next native binding problem. Preserve false/unknown scope refusal.
 
 ## v0.6.20 runtime Level Editor
 

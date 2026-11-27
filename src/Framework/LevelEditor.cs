@@ -32,13 +32,15 @@ internal sealed class LevelEditor
     {
         internal readonly int Scene;
         internal readonly IntPtr Model;
-        internal readonly Il2CppObjectBase State, Board, TileSet;
+        internal readonly Il2CppObjectBase State, Board, TileSet, Registry;
         internal readonly object Room, Spawner;
-        internal Context(int scene, IntPtr model, Il2CppObjectBase state, Il2CppObjectBase board, Il2CppObjectBase tileSet, object room, object spawner)
-        { Scene = scene; Model = model; State = state; Board = board; TileSet = tileSet; Room = room; Spawner = spawner; }
+        internal Context(int scene, IntPtr model, Il2CppObjectBase state, Il2CppObjectBase board, Il2CppObjectBase tileSet, object room, Il2CppObjectBase registry, object spawner)
+        { Scene = scene; Model = model; State = state; Board = board; TileSet = tileSet; Room = room; Registry = registry; Spawner = spawner; }
         internal bool SameSession(Context other) => other != null && Scene == other.Scene && Model == other.Model &&
             State.Pointer == other.State.Pointer && Board.Pointer == other.Board.Pointer && TileSet.Pointer == other.TileSet.Pointer &&
-            Room is Il2CppObjectBase a && other.Room is Il2CppObjectBase b && a.Pointer != IntPtr.Zero && a.Pointer == b.Pointer;
+            Room is Il2CppObjectBase a && other.Room is Il2CppObjectBase b && a.Pointer != IntPtr.Zero && a.Pointer == b.Pointer &&
+            ((Registry == null && other.Registry == null) ||
+                (Registry != null && other.Registry != null && Registry.Pointer == other.Registry.Pointer));
     }
     private sealed class TileCell
     {
@@ -222,63 +224,106 @@ internal sealed class LevelEditor
         {
             selectedEnemy = null;
             enemies.Clear(); matches.Clear(); enemyPage = 0;
-            if (live.Spawner == null)
-                status = "Tiles ready. Enable Dev mode before starting a new campaign to capture enemies.";
-            else
+            try
             {
-                try { ScanEnemies(live); }
-                catch (Exception ex)
-                {
-                    enemies.Clear(); matches.Clear();
-                    status = "Tiles ready; enemy registry unavailable: " + ex.GetBaseException().Message;
-                    log.LogWarning("BMF level editor enemy registry: " + ex.GetBaseException());
-                }
+                if (live.Registry == null) throw new InvalidOperationException("Current HUD piece registry unavailable.");
+                var config = ResolveConfig(live);
+                ScanEnemies(live, config);
+            }
+            catch (Exception ex)
+            {
+                enemies.Clear(); matches.Clear();
+                status = "Tiles ready; " + ex.GetBaseException().Message;
+                log.LogWarning("BMF level editor enemy registry: " + ex.GetBaseException());
             }
         }
     }
 
-    // Classification from the actual spawn handler's registry and the game's
-    // PieceQualities logic, not names, guesses, or the entire loaded asset list.
-    private static bool ValidateEnemy(Context context, UObject definition, out object id, out object team, out string key)
+    private static Type ConfigType() => Load("GameTags", "Jade.GameTags.AffectedPiecesConfig");
+
+    // Prefer the exact captured configuration when it matches both the HUD
+    // state and registry. Otherwise the game has a ScriptableObject config:
+    // resolve it from loaded assets, only if there is exactly one live choice.
+    // No asset loading, synthetic tag rules, or selection by asset name.
+    private static UObject ResolveConfig(Context context)
+    {
+        var type = ConfigType();
+        if (!typeof(UObject).IsAssignableFrom(type))
+            throw new InvalidOperationException("Unexpected affected-pieces config type.");
+        if (context.Spawner != null && context.Registry != null)
+        {
+            try
+            {
+                var state = Get(context.Spawner, "gameState") as Il2CppObjectBase;
+                var registry = Get(context.Spawner, "pieceRegistry") as Il2CppObjectBase;
+                if (state != null && state.Pointer == context.State.Pointer &&
+                    registry != null && registry.Pointer == context.Registry.Pointer &&
+                    Get(context.Spawner, "affectedPiecesConfig") is UObject captured &&
+                    captured != null && captured.Pointer != IntPtr.Zero && type.IsInstanceOfType(captured))
+                    return captured;
+            }
+            catch { /* A stale capture never authorizes placement. Use the unique loaded config instead. */ }
+        }
+        var cast = FindCast(type);
+        UObject config = null;
+        int inspected = 0;
+        var objects = Resources.FindObjectsOfTypeAll(Il2CppType.From(type));
+        if (objects != null)
+            foreach (var obj in objects)
+            {
+                if (++inspected > ScanLimit) throw new InvalidOperationException("Affected-pieces config scan capped.");
+                if (obj == null) continue;
+                if (cast.Invoke(obj, null) is not UObject candidate || candidate == null || candidate.Pointer == IntPtr.Zero ||
+                    !type.IsInstanceOfType(candidate))
+                    throw new InvalidOperationException("Affected-pieces config cannot be read.");
+                if (config != null && config.Pointer != candidate.Pointer)
+                    throw new InvalidOperationException("Ambiguous affected-pieces config; placement unavailable.");
+                config = candidate;
+            }
+        if (config == null) throw new InvalidOperationException("No loaded affected-pieces config.");
+        return config;
+    }
+
+    // Classification uses the current HUD registry and the game's PieceQualities
+    // logic, not names, guesses, or the entire loaded asset list.
+    private static bool ValidateEnemy(Context context, UObject config, UObject definition, out object id, out object team, out string key)
     {
         id = team = null; key = null;
-        if (context.Spawner == null || definition == null) return false;
+        if (context.Registry == null || config == null || definition == null) return false;
         var defType = Load("GameDefinitions", "Jade.GameDefinitions.PieceDefinition");
+        var aiType = Load("GameDefinitions", "Jade.GameDefinitions.PieceAIBehaviourDefinition");
         var idType = ModelType("PieceTypeId");
         var teamType = ModelType("Team");
         var pointType = ModelType("IntPoint2D");
         if (!defType.IsInstanceOfType(definition) || !teamType.IsEnum) return false;
-        var spawnerState = Get(context.Spawner, "gameState") as Il2CppObjectBase;
-        if (spawnerState == null || spawnerState.Pointer != context.State.Pointer) return false;
         id = Call(definition, "get_PieceTypeId");
         if (!idType.IsInstanceOfType(id) || Call(id, "get_Id") is not string name || string.IsNullOrWhiteSpace(name) ||
             Call(id, "get_Guid") is not string guid || string.IsNullOrWhiteSpace(guid)) return false;
         key = name + " | " + guid;
         if (Call(definition, "get_PlayerControllable") is not bool player || player ||
             Call(definition, "get_Hp") is not int hp || hp <= 0 ||
-            Call(definition, "get_AiBehaviourDefinition") is not UObject ai || ai == null) return false;
+            Call(definition, "get_AiBehaviourDefinition") is not Il2CppObjectBase ai ||
+            ai.Pointer == IntPtr.Zero || !aiType.IsInstanceOfType(ai)) return false;
         var size = Call(definition, "get_PieceSize");
         if (size == null || !size.GetType().IsEnum || size.GetType().FullName != "Jade.SharedEnums.PieceSize") return false;
         var footprint = Require(ModelType("PieceSizeHelper"), "PieceSizeToTileSize", true, pointType,
             size.GetType(), typeof(float)).Invoke(null, new[] { size, (object)0f });
         if ((int)Get(footprint, "x") != 1 || (int)Get(footprint, "y") != 1) return false;
-        var registry = Get(context.Spawner, "pieceRegistry");
+        var registry = context.Registry;
         if (registry == null || registry.GetType().FullName != "Jade.GameDefinitions.PieceRegistry" ||
             Require(registry.GetType(), "GetPieceDefinition", false, defType, idType).Invoke(registry, new[] { id }) is not UObject registered ||
             registered == null || registered != definition) return false;
-        var config = Get(context.Spawner, "affectedPiecesConfig");
-        if (config == null || config.GetType().FullName != "Jade.GameTags.AffectedPiecesConfig") return false;
+        var configType = ConfigType();
+        if (!configType.IsInstanceOfType(config)) return false;
         var qualitiesType = Load("GameDefinitions", "Jade.GameDefinitions.PieceQualities");
-        var qualities = Constructor(qualitiesType, defType, config.GetType()).Invoke(new object[] { definition, config });
+        var qualities = Constructor(qualitiesType, defType, configType).Invoke(new object[] { definition, config });
         if (Call(qualities, "get_IsNonNpcCreature") is not bool creature || !creature) return false;
         team = Require(qualitiesType, "GetDefaultNonPlayerTeam", false, teamType).Invoke(qualities, null);
         return team != null && team.ToString() == "EnemyOfPlayers";
     }
 
-    private void ScanEnemies(Context context)
+    private static MethodInfo FindCast(Type type)
     {
-        var type = Load("GameDefinitions", "Jade.GameDefinitions.PieceDefinition");
-        if (!typeof(UObject).IsAssignableFrom(type)) throw new InvalidOperationException("Invalid definition type.");
         MethodInfo cast = null;
         foreach (var method in typeof(Il2CppObjectBase).GetMethods(BindingFlags.Public | BindingFlags.Instance))
         {
@@ -287,7 +332,15 @@ internal sealed class LevelEditor
             if (cast != null) throw new InvalidOperationException("Ambiguous definition cast.");
             cast = method.MakeGenericMethod(type);
         }
-        if (cast == null) throw new InvalidOperationException("Definition cast unavailable.");
+        if (cast == null) throw new InvalidOperationException("Native checked cast unavailable: " + type.Name);
+        return cast;
+    }
+
+    private void ScanEnemies(Context context, UObject config)
+    {
+        var type = Load("GameDefinitions", "Jade.GameDefinitions.PieceDefinition");
+        if (!typeof(UObject).IsAssignableFrom(type)) throw new InvalidOperationException("Invalid definition type.");
+        var cast = FindCast(type);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var objects = Resources.FindObjectsOfTypeAll(Il2CppType.From(type));
         int inspected = 0, skipped = 0;
@@ -299,7 +352,7 @@ internal sealed class LevelEditor
                 try
                 {
                     var def = cast.Invoke(obj, null) as UObject;
-                    if (ValidateEnemy(context, def, out _, out _, out string key) && seen.Add(key))
+                    if (ValidateEnemy(context, config, def, out _, out _, out string key) && seen.Add(key))
                         enemies.Add(new Enemy(def, def.name ?? key, key));
                 }
                 catch (Exception ex)
@@ -309,8 +362,9 @@ internal sealed class LevelEditor
             }
         enemies.Sort(CompareEnemies);
         ApplyFilter();
-        status = enemies.Count + " eligible loaded enemies" + (inspected > ScanLimit ? " (scan capped)" : "") +
-            (skipped > 0 ? " | " + skipped + " unreadable" : "") + ". Select a free tile.";
+        status = enemies.Count + " eligible enemies / " + Math.Min(inspected, ScanLimit) + " scanned" +
+            (inspected > ScanLimit ? " (capped)" : "") + (skipped > 0 ? " | " + skipped + " unreadable" : "") + ".";
+        log.LogInfo("BMF level editor: " + status + " Source: current HUD registry and loaded native classification config.");
     }
     private static int CompareEnemies(Enemy a, Enemy b) => StringComparer.OrdinalIgnoreCase.Compare(a.Name, b.Name);
     private void ApplyFilter()
@@ -380,7 +434,8 @@ internal sealed class LevelEditor
         var point = board.Point(tile.X, tile.Y);
         if (!tile.Available || !board.CanSpawnPieceOnPosition(point))
             throw new InvalidOperationException("Tile no longer available for spawn.");
-        if (!ValidateEnemy(live, command.Enemy.Definition, out var id, out var team, out string key) || key != command.Enemy.Key)
+        var config = ResolveConfig(live);
+        if (!ValidateEnemy(live, config, command.Enemy.Definition, out var id, out var team, out string key) || key != command.Enemy.Key)
             throw new InvalidOperationException("Enemy definition is no longer eligible.");
         var roomType = Load("Jade.Networking", "Jade.Networking.LocalNetworkRoom");
         var requestType = Load("Jade.Messaging", "Jade.Messaging.IRequest");
