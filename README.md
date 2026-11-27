@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.37-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.38-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,12 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.38 — Remember Hero Forms between adventures
+
+With Hero Forms enabled, a living hero transformed into an enemy by BMF retains that chosen form when leaving an adventure and entering a different playable local solo location, including a playable tavern board. Each hero is remembered separately for the current game process. The new board can have a different session, campaign, scenario or player number. BMF matches the original character-sheet ID and hero type against the current locally owned selected character; cross-session matches require the game's character-sheet lookup to verify the stored character, with a generated GUID or matching account for other sheet IDs. A different or newly created character does not inherit the form. Native progression/reversion is unchanged.
+
+BMF snapshots live forms before native completion/leave cleanup, retains managed choices when the board unloads, and waits for a valid local solo board, eligible hero, idle turn and sufficient space before submitting a new reversible transformation. The creature receives a fresh enemy deck. If a creature is unavailable or there is no room, the choice remains remembered. A rejected restoration request is not repeatedly sent on the same board. Ordinary in-play reversion and death clear the tracked form; turning Hero Forms off or restarting the game clears remembered choices. This does not transform menu avatars or non-playable hub scenes; the location must expose the supported gameplay board and turn queue. Windows build and live gameplay acceptance are pending.
 
 ## v0.6.37 — Switch between Hero Forms
 

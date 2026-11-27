@@ -6,8 +6,8 @@ using UObject = UnityEngine.Object;
 namespace Battlemarked.ModFramework;
 
 // Let native level completion revert and record the original hero normally.
-// Carry only confirmed BMF enemy forms, then use the ordinary validated BMF
-// transformation request on the next playable board. Never edit native
+// Carry confirmed BMF enemy forms across local adventures by character sheet,
+// then use the ordinary validated BMF request on the next playable board. Never edit native
 // transformedPieces, recorded pieces, progression snapshots or saved decks.
 internal static class HeroFormPersistence
 {
@@ -20,28 +20,31 @@ internal static class HeroFormPersistence
     private static readonly Dictionary<IntPtr, Il2CppObjectBase> seenTransitions = new();
     private static readonly List<Form> active = new(), carry = new();
     private static Form armed;
-    private static Stage source, destination;
+    private static Stage destination;
+    private static long loadSequence;
     private static DateTime nextTick;
     internal static string Status { get; private set; } = "Carry-over unavailable.";
 
     private sealed class Stage
     {
-        internal string Campaign, Scenario, Step;
+        internal string Campaign, Scenario, Step, Run;
         internal int Index;
         internal bool SameEvent(Stage other) => other != null &&
             Campaign == other.Campaign && Scenario == other.Scenario && Step == other.Step;
-        internal bool SameLevel(Stage other) => SameEvent(other) && Index == other.Index;
+        internal bool SameLevel(Stage other) => SameEvent(other) && Index == other.Index && Run == other.Run;
     }
 
     private sealed class Form
     {
-        internal Il2CppObjectBase State, Board, Spawner;
-        internal string Session, Sheet, OriginalKey, FormKey, FormName, FormId, FormGuid;
+        internal Il2CppObjectBase State, Board, Spawner, Room;
+        internal string Session, Sheet, Account, OriginalKey, FormKey, FormName, FormId, FormGuid, AttemptSession;
         internal ulong Owner;
         internal int SourceId, OriginalId, ReplacementId;
-        internal Stage Stage;
+        internal Stage Stage, AttemptStage;
+        internal long SourceLoadSequence;
+        internal IntPtr ViewBoard;
         internal DateTime Expires;
-        internal bool BlockedReported, Automatic;
+        internal bool BlockedReported, Automatic, SheetVerified, VerifiedLive;
     }
 
     private static Type Load(string assembly, string name) => Assembly.Load(new AssemblyName(assembly)).GetType(name, true);
@@ -100,18 +103,19 @@ internal static class HeroFormPersistence
     // least one and compare the complete pair, not a display name.
     private static string StageKey(object id)
     {
+        if (id == null) return "";
         var name = Call(id, "get_Id") as string;
         var guid = Call(id, "get_Guid") as string;
-        if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(guid))
-            throw new InvalidOperationException("Native stage identity unavailable.");
-        return name + " | " + guid;
+        return string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(guid) ? "" : name + " | " + guid;
     }
     private static Stage ReadStage(object state)
     {
         var selection = Get(state, "scenarioSelection");
+        if (selection == null) return new Stage { Campaign = "", Scenario = "", Step = "", Run = "", Index = -1 };
         return new Stage {
             Campaign = StageKey(Get(selection, "campaignId")), Scenario = StageKey(Get(selection, "scenarioId")),
-            Step = StageKey(Get(selection, "stepId")), Index = (int)Get(selection, "currentScenarioStepIndex")
+            Step = StageKey(Get(selection, "stepId")), Index = (int)Get(selection, "currentScenarioStepIndex"),
+            Run = Get(selection, "currentScenarioRunId") as string ?? ""
         };
     }
 
@@ -153,8 +157,25 @@ internal static class HeroFormPersistence
                 typeof(Il2CppSystem.Collections.IEnumerator), Load("Jade.Messaging", "Jade.Messaging.ViewEventScenarioStepLoaded"));
             context.Patches.Patch(loaded, prefix: Hook(nameof(OnStepLoaded)));
             context.Patches.Patch(spawn, postfix: Hook(nameof(TrackSpawn)));
+            // Both the simulation's explicit leave request and the local room
+            // close path may precede native cleanup. Either can snapshot the
+            // still-live forms. A later board-change check is the fallback.
+            try
+            {
+                var leave = Exact(Logic("RequestHandlerLeaveGame"), "HandleRequest", false,
+                    typeof(Il2CppSystem.Collections.IEnumerator), Load("Jade.Messaging", "Jade.Messaging.IRequest"));
+                context.Patches.Patch(leave, prefix: Hook(nameof(BeforeLeaveGame)));
+            }
+            catch (Exception ex) { context.Log.LogWarning("BMF hero form leave request hook: " + ex.GetBaseException().Message); }
+            try
+            {
+                var room = Load("Jade.Networking", "Jade.Networking.LocalNetworkRoom");
+                var reasonType = Load("Jade.Networking", "Jade.Networking.INetworkRoom+LeaveReason");
+                context.Patches.Patch(Exact(room, "Leave", false, typeof(void), reasonType), prefix: Hook(nameof(BeforeLocalLeave)));
+            }
+            catch (Exception ex) { context.Log.LogWarning("BMF hero form room leave hook: " + ex.GetBaseException().Message); }
             ctx = context;
-            Status = "Forms carry over; large forms need open space.";
+            Status = "Forms remembered across local adventures; large forms need space.";
             ctx.Log.LogInfo("BMF hero form carry-over: native spawn and level transition hooks ready.");
         }
         catch (Exception ex)
@@ -168,8 +189,8 @@ internal static class HeroFormPersistence
     internal static void Clear()
     {
         armed = null; active.Clear(); carry.Clear(); seenTransitions.Clear();
-        source = destination = null; nextTick = DateTime.MinValue;
-        if (ctx != null) Status = "Forms carry over; large forms need open space.";
+        destination = null; loadSequence = 0; nextTick = DateTime.MinValue;
+        if (ctx != null) Status = "Forms remembered across local adventures; large forms need space.";
     }
     internal static void Stop()
     {
@@ -193,19 +214,22 @@ internal static class HeroFormPersistence
             var board = Get(state, "board") as Il2CppObjectBase;
             var id = Call(definition, "get_PieceTypeId");
             var form = new Form {
-                State = nativeState, Board = board, Spawner = spawner,
+                State = nativeState, Board = board, Spawner = spawner, Room = live.Room as Il2CppObjectBase,
                 Session = Get(state, "sessionId") as string,
                 Owner = (ulong)Call(Get(original, "ownerId"), "get_Id"), Sheet = Sheet(original),
                 SourceId = PieceId(current), OriginalId = PieceId(original), OriginalKey = Key(Get(original, "typeId")),
                 FormId = (string)Call(id, "get_Id"), FormGuid = (string)Call(id, "get_Guid"),
                 FormKey = Key(id), FormName = definition.name, Stage = ReadStage(state),
+                SourceLoadSequence = loadSequence, ViewBoard = live.Board.Pointer,
                 Expires = DateTime.UtcNow.AddSeconds(30), ReplacementId = -1, Automatic = automatic
             };
             if (spawner == null || spawner.Pointer == IntPtr.Zero || nativeState == null || nativeState.Pointer == IntPtr.Zero ||
-                board == null || board.Pointer == IntPtr.Zero ||
+                board == null || board.Pointer == IntPtr.Zero || form.Room == null || form.Room.Pointer == IntPtr.Zero ||
                 !SameNative(Get(spawner, "gameState"), state) ||
                 !MatchesSession(form, live.State) || string.IsNullOrWhiteSpace(form.Sheet) ||
                 form.SourceId < 0 || form.OriginalId < 0 || !form.Stage.SameLevel(ReadStage(live.State))) return;
+            form.SheetVerified = TryReadHolder(state, original, form.OriginalKey, out form.Account);
+            if (!form.SheetVerified) ctx.Log.LogWarning("BMF hero form carry-over: saved character sheet unavailable; same-session carry-over only.");
             armed = form;
         }
         catch (Exception ex) { ctx.Log.LogWarning("BMF hero form carry-over arm: " + ex.GetBaseException().Message); }
@@ -216,22 +240,24 @@ internal static class HeroFormPersistence
         Call(Get(state, "hostPlayerId"), "get_Id") is ulong host && host == form.Owner &&
         Call(state, "IsInMultiplayerContext") is bool multiplayer && !multiplayer;
 
-    private static bool IsOwnedPiece(Form form, object piece, bool transformed, string key)
+    private static bool IsOwnedPiece(Form form, object piece, bool transformed, string key, ulong? ownerOverride = null)
     {
         return piece is Il2CppObjectBase native && native.Pointer != IntPtr.Zero &&
             Get(piece, "isPlayerControlled") is bool controlled && controlled &&
             Get(piece, "isTransformedPiece") is bool isForm && isForm == transformed &&
             Get(piece, "team")?.ToString() == "Players" &&
-            Call(Get(piece, "ownerId"), "get_Id") is ulong owner && owner == form.Owner &&
+            Call(Get(piece, "ownerId"), "get_Id") is ulong owner && owner == (ownerOverride ?? form.Owner) &&
             Sheet(piece) == form.Sheet && Key(Get(piece, "typeId")) == key;
     }
 
     private static void TrackSpawn(object __instance, object __0, object __result)
     {
-        var form = armed;
-        if (!Active || form == null || DateTime.UtcNow > form.Expires) return;
+        if (!Active) return;
         try
         {
+            ObserveNativeReversion(__instance, __0, __result);
+            var form = armed;
+            if (form == null || DateTime.UtcNow > form.Expires) return;
             if (!SameNative(__instance, form.Spawner) || !SameNative(Get(__instance, "gameState"), form.State) ||
                 !SameNative(Get(form.State, "board"), form.Board) ||
                 Get(__0, "isTransformedPiece") is not bool transformed || !transformed ||
@@ -246,8 +272,9 @@ internal static class HeroFormPersistence
             form.ReplacementId = PieceId(__result);
             if (form.ReplacementId < 0) return;
             for (int i = active.Count - 1; i >= 0; i--)
-                if (active[i].Session != form.Session ||
-                    (active[i].Owner == form.Owner && active[i].Sheet == form.Sheet)) active.RemoveAt(i);
+                if (SameCharacterChoice(active[i], form)) active.RemoveAt(i);
+            for (int i = carry.Count - 1; i >= 0; i--)
+                if (SameCharacterChoice(carry[i], form)) carry.RemoveAt(i);
             if (active.Count >= 16) throw new InvalidOperationException("Too many recorded local forms.");
             active.Add(form);
             if (form.Automatic) Status = "Restored " + form.FormName + " on the new level.";
@@ -255,6 +282,74 @@ internal static class HeroFormPersistence
                 form.FormName + " for piece " + form.ReplacementId + ".");
         }
         catch (Exception ex) { ctx.Log.LogWarning("BMF hero form carry-over spawn: " + ex.GetBaseException().Message); }
+    }
+
+    // Native Player.HasCharacterSheet resolves the actual selected character,
+    // unlike a party slot or the room-scoped PlayerId. CharacterSheetId.GenerateNew
+    // uses a GUID; a non-GUID ID additionally requires the same account.
+    private static bool TryReadHolder(object state, object piece, string originalKey, out string account)
+    {
+        account = null;
+        try
+        {
+            var playerId = Get(piece, "ownerId");
+            var sheetId = Get(piece, "characterSheetId");
+            if (Call(playerId, "get_Id") is not ulong owner ||
+                Call(Get(state, "hostPlayerId"), "get_Id") is not ulong host || host != owner ||
+                Call(state, "IsInMultiplayerContext") is not bool multiplayer || multiplayer ||
+                string.IsNullOrWhiteSpace(Sheet(piece))) return false;
+            var playerType = Model("Player");
+            var sheetType = Model("CharacterSheet");
+            var playerArgs = new object[] { playerId, null };
+            if (Exact(Model("GameState"), "TryGetPlayerForPlayerId", false, typeof(bool), Model("PlayerId"), playerType.MakeByRefType())
+                .Invoke(state, playerArgs) is not bool found || !found || playerArgs[1] == null) return false;
+            var player = playerArgs[1];
+            if (Call(Get(player, "playerId"), "get_Id") is not ulong playerOwner || playerOwner != owner) return false;
+            var sheetArgs = new object[] { sheetId, null, false };
+            if (Exact(playerType, "HasCharacterSheet", false, typeof(bool), sheetId.GetType(), sheetType.MakeByRefType(), typeof(bool))
+                .Invoke(player, sheetArgs) is not bool hasSheet || !hasSheet || sheetArgs[1] == null) return false;
+            var selected = sheetArgs[1];
+            if (Call(Get(selected, "characterSheetId"), "get_Id") as string != Sheet(piece) ||
+                Key(Get(selected, "pieceTypeId")) != originalKey ||
+                Get(selected, "isRetired") is not bool retired || retired) return false;
+            account = Get(player, "accountId") as string;
+            return true;
+        }
+        catch { return false; }
+    }
+
+    private static bool StableSheet(string sheet) => Guid.TryParse(sheet, out var id) && id != Guid.Empty;
+    private static bool SameCharacterChoice(Form a, Form b) =>
+        a.Sheet == b.Sheet && a.OriginalKey == b.OriginalKey &&
+        ((a.Session == b.Session && a.Owner == b.Owner) ||
+            (a.SheetVerified && b.SheetVerified &&
+                (StableSheet(a.Sheet) || (!string.IsNullOrWhiteSpace(a.Account) && a.Account == b.Account))));
+
+    private static bool MatchesCharacter(Form form, object state, object piece)
+    {
+        if (Call(Get(state, "hostPlayerId"), "get_Id") is not ulong host ||
+            !IsOwnedPiece(form, piece, false, form.OriginalKey, host)) return false;
+        if (MatchesSession(form, state)) return true;
+        return form.SheetVerified && TryReadHolder(state, piece, form.OriginalKey, out var account) &&
+            (StableSheet(form.Sheet) || (!string.IsNullOrWhiteSpace(form.Account) && form.Account == account));
+    }
+
+    // A native reversion during ordinary play should not become a new
+    // adventure choice. Successful transition/leave hooks first move the
+    // live choice out of active, so their cleanup cannot erase it.
+    private static void ObserveNativeReversion(object spawner, object spawn, object piece)
+    {
+        if (active.Count == 0 || Get(spawn, "isTransformedPiece") is not bool transformed || transformed ||
+            Get(spawn, "pieceToReplace") is not Il2CppObjectBase replaced || replaced.Pointer == IntPtr.Zero ||
+            Call(replaced, "get_Id") is not int replacedId) return;
+        for (int i = active.Count - 1; i >= 0; i--)
+        {
+            var form = active[i];
+            if (SameNative(spawner, form.Spawner) && SameNative(Get(spawner, "gameState"), form.State) &&
+                SameNative(Get(form.State, "board"), form.Board) && MatchesSession(form, form.State) &&
+                replacedId == form.ReplacementId && IsOwnedPiece(form, piece, false, form.OriginalKey))
+                active.RemoveAt(i);
+        }
     }
 
     private static object FindPiece(object board, int id)
@@ -310,9 +405,45 @@ internal static class HeroFormPersistence
         return IsOwnedPiece(form, original, false, form.OriginalKey) && PieceId(original) == form.OriginalId;
     }
 
-    // Both verified native success paths yield ForceRevertValidTransformations
-    // first. Snapshot living tracked forms at the first MoveNext, not at
-    // a generic scene change (which would also catch manual exits or deaths).
+    private static bool IsLiveForm(Form form, object state, object board)
+    {
+        return SameNative(form.State, state) && SameNative(form.Board, board) && MatchesSession(form, state) &&
+            FindPiece(board, form.ReplacementId) is object piece && IsOwnedPiece(form, piece, true, form.FormKey) &&
+            isDead.Invoke(null, new[] { piece }) is bool dead && !dead && HasNativeOriginal(form, state);
+    }
+
+    private static void MoveToCarry(Form form)
+    {
+        for (int i = carry.Count - 1; i >= 0; i--)
+            if (SameCharacterChoice(carry[i], form)) carry.RemoveAt(i);
+        active.Remove(form);
+        form.State = form.Board = form.Spawner = null;
+        form.Room = null;
+        if (carry.Count < 64) carry.Add(form);
+        Status = carry.Count + " remembered form(s) waiting for a playable adventure.";
+    }
+
+    // Both native success paths revert before progression recording. The
+    // explicit leave request/room close path can also discard the old board.
+    private static void SnapshotForms(object state)
+    {
+        var board = Get(state, "board");
+        if (Call(board, "get_IsLoaded") is not bool loaded || !loaded) return;
+        var stage = ReadStage(state);
+        bool captured = false;
+        for (int i = active.Count - 1; i >= 0; i--)
+        {
+            var form = active[i];
+            if (!SameNative(form.State, state) || !SameNative(form.Board, board) ||
+                !MatchesSession(form, state) || !form.Stage.SameLevel(stage)) continue;
+            if (!IsLiveForm(form, state, board)) { active.RemoveAt(i); continue; }
+            form.VerifiedLive = true;
+            MoveToCarry(form);
+            captured = true;
+        }
+        if (captured) ctx.Log.LogInfo("BMF hero form carry-over: " + Status);
+    }
+
     private static void BeforeTransition(object __instance)
     {
         if (!Active || active.Count == 0 || __instance is not Il2CppObjectBase transition ||
@@ -320,57 +451,90 @@ internal static class HeroFormPersistence
         if (seenTransitions.Count >= 32) seenTransitions.Clear();
         if (seenTransitions.ContainsKey(transition.Pointer)) return;
         seenTransitions.Add(transition.Pointer, transition);
+        try { SnapshotForms(Get(Read(member, __instance), "gameState")); }
+        catch (Exception ex) { ctx.Log.LogWarning("BMF hero form carry-over transition: " + ex.GetBaseException().Message); }
+    }
+
+    private static void BeforeLeaveGame(object __instance)
+    {
+        if (!Active || active.Count == 0) return;
+        try { SnapshotForms(Get(__instance, "gameState")); }
+        catch (Exception ex) { ctx.Log.LogWarning("BMF hero form carry-over leave: " + ex.GetBaseException().Message); }
+    }
+
+    private static void BeforeLocalLeave(object __instance)
+    {
+        if (!Active || active.Count == 0) return;
         try
         {
-            var state = Get(Read(member, __instance), "gameState");
-            var board = Get(state, "board");
-            if (Call(board, "get_IsLoaded") is not bool loaded || !loaded) return;
-            var stage = ReadStage(state);
-            var found = new List<Form>();
+            // The HUD may already have been torn down. The room was captured
+            // by the verified local request; accept only that exact native
+            // room and its matching local authoritative state.
+            var states = new List<Il2CppObjectBase>();
             foreach (var form in active)
             {
-                if (!SameNative(form.State, state) || !SameNative(form.Board, board) ||
-                    !MatchesSession(form, state) || !form.Stage.SameLevel(stage)) continue;
-                var piece = FindPiece(board, form.ReplacementId);
-                if (!IsOwnedPiece(form, piece, true, form.FormKey) ||
-                    isDead.Invoke(null, new[] { piece }) is not bool dead || dead ||
-                    !HasNativeOriginal(form, state)) continue;
-                found.Add(form);
+                if (!SameNative(__instance, form.Room) || !MatchesSession(form, form.State)) continue;
+                if (!states.Contains(form.State)) states.Add(form.State);
             }
-            if (found.Count == 0) return;
-            // Replace old tickets for the same sheet, preserving separate
-            // heroes. A native revert before this transition is not retained.
-            if (carry.Count != 0 && (!MatchesSession(carry[0], state) || carry[0].Stage.Campaign != stage.Campaign))
-                carry.Clear();
-            foreach (var form in found)
-            {
-                for (int i = carry.Count - 1; i >= 0; i--)
-                    if (carry[i].Sheet == form.Sheet && carry[i].Owner == form.Owner) carry.RemoveAt(i);
-                // Retain only managed identities while the old board unloads.
-                active.Remove(form);
-                form.State = form.Board = form.Spawner = null;
-                carry.Add(form);
-            }
-            source = stage; destination = null;
-            Status = carry.Count + " enemy form(s) waiting for next level.";
-            ctx.Log.LogInfo("BMF hero form carry-over: " + Status);
+            foreach (var state in states) SnapshotForms(state);
         }
-        catch (Exception ex) { ctx.Log.LogWarning("BMF hero form carry-over transition: " + ex.GetBaseException().Message); }
+        catch (Exception ex) { ctx.Log.LogWarning("BMF hero form carry-over room leave: " + ex.GetBaseException().Message); }
     }
 
     private static void OnStepLoaded(object __0)
     {
-        if (!Active || carry.Count == 0 || source == null) return;
+        if (!Active || (carry.Count == 0 && active.Count == 0)) return;
         try
         {
-            var stage = new Stage {
+            destination = new Stage {
                 Campaign = StageKey(Call(__0, "get_CampaignId")), Scenario = StageKey(Call(__0, "get_ScenarioId")),
                 Step = StageKey(Call(__0, "get_ScenarioStepId"))
             };
-            if (stage.Campaign != source.Campaign) return;
-            destination = stage;
+            loadSequence++;
         }
         catch (Exception ex) { ctx.Log.LogWarning("BMF hero form carry-over load event: " + ex.GetBaseException().Message); }
+    }
+
+    private static bool IsNewPlayableBoard(Form form, LevelEditor.Context live, Stage stage)
+    {
+        var session = Get(live.State, "sessionId") as string;
+        if (string.IsNullOrWhiteSpace(session) || string.IsNullOrWhiteSpace(form.Session)) return false;
+        // New local room or new scenario run can retain the same character
+        // while changing owner, campaign and step IDs. No old request runs.
+        if (form.Session != session) return true;
+        if (stage.SameLevel(form.Stage)) return false;
+        // Same-room changes require evidence of a fresh playable board,
+        // not merely an updated scenario selection while the old board loads.
+        if (loadSequence > form.SourceLoadSequence && destination != null &&
+            !string.IsNullOrWhiteSpace(destination.Step) && stage.SameEvent(destination)) return true;
+        return form.ViewBoard != IntPtr.Zero && live.Board.Pointer != form.ViewBoard &&
+            !string.IsNullOrWhiteSpace(stage.Run) && !string.IsNullOrWhiteSpace(form.Stage.Run) && stage.Run != form.Stage.Run;
+    }
+
+    private static bool AlreadyAttempted(Form form, LevelEditor.Context live, Stage stage) =>
+        form.AttemptSession == Get(live.State, "sessionId") as string && form.AttemptStage != null &&
+        form.AttemptStage.SameLevel(stage);
+
+    // When leaving through another native route, remember forms last proven
+    // live on a stable board. Never reapply to that same board. Ordinary
+    // gameplay reversion and death remove the choice before a later exit.
+    private static void ObserveActiveForms(LevelEditor.Context live, Stage stage)
+    {
+        for (int i = active.Count - 1; i >= 0; i--)
+        {
+            var form = active[i];
+            if (IsNewPlayableBoard(form, live, stage))
+            {
+                if (form.VerifiedLive) MoveToCarry(form);
+                else active.RemoveAt(i);
+                continue;
+            }
+            if (!MatchesSession(form, live.State) || !form.Stage.SameLevel(stage) ||
+                !SameNative(Get(form.State, "board"), form.Board) ||
+                Call(form.Board, "get_IsLoaded") is not bool loaded || !loaded) continue;
+            if (IsLiveForm(form, form.State, form.Board)) form.VerifiedLive = true;
+            else if (form.VerifiedLive || DateTime.UtcNow >= form.Expires) active.RemoveAt(i);
+        }
     }
 
     internal static bool MatchesStage(object state, object liveState)
@@ -385,6 +549,7 @@ internal static class HeroFormPersistence
 
     private static object FindHero(LevelEditor.Context live, Form form)
     {
+        if (Call(Get(live.State, "hostPlayerId"), "get_Id") is not ulong host) return null;
         var pieces = Get(Get(live.Board, "turnQueue"), "pieces");
         if (Call(pieces, "get_Count") is not int count || count < 0 || count > 4096) return null;
         var item = Exact(pieces.GetType(), "get_Item", false, pieceType, typeof(int));
@@ -394,7 +559,7 @@ internal static class HeroFormPersistence
             var piece = item.Invoke(pieces, new object[] { i });
             if (piece == null || Get(piece, "isPlayerControlled") is not bool controlled || !controlled ||
                 Get(piece, "team")?.ToString() != "Players" ||
-                Call(Get(piece, "ownerId"), "get_Id") is not ulong owner || owner != form.Owner ||
+                Call(Get(piece, "ownerId"), "get_Id") is not ulong owner || owner != host ||
                 Sheet(piece) != form.Sheet) continue;
             if (target != null) return null;
             target = piece;
@@ -402,31 +567,30 @@ internal static class HeroFormPersistence
         return target;
     }
 
-    // Runs even when F10 is closed. Wait for scope, native load event,
-    // matching destination, a current player turn and an idle local queue.
-    // Queue one request at a time; a rejected dispatched command is not retried.
+    // Runs even when F10 is closed. A fresh verified local board and matching
+    // character are required; exact session/scene checks still apply to each
+    // newly created native request.
+    // Queue one request at a time; a rejected dispatch is not retried on that board.
     internal static void Tick()
     {
-        if (!Active || carry.Count == 0 || DateTime.UtcNow < nextTick) return;
+        if (!Active || (carry.Count == 0 && active.Count == 0) || DateTime.UtcNow < nextTick) return;
         nextTick = DateTime.UtcNow.AddMilliseconds(500);
         try
         {
             if (!HouseRules.TryGetHeroFormsContext(out var live, out _)) return;
             var stage = ReadStage(live.State);
-            if (!MatchesSession(carry[0], live.State) || source == null || stage.Campaign != source.Campaign)
-            { Clear(); return; }
-            if (destination == null || !stage.SameEvent(destination) || stage.SameLevel(source) ||
-                HeroForms.Waiting || live.Registry == null ||
-                Call(live.Room, "get_HasRequestsInQueue") is not bool busy || busy) return;
+            if (HeroForms.Waiting || Call(live.Room, "get_HasRequestsInQueue") is not bool busy || busy) return;
+            ObserveActiveForms(live, stage);
+            if (carry.Count == 0 || live.Registry == null) return;
             for (int i = 0; i < carry.Count; i++)
             {
                 var form = carry[i];
+                if (!IsNewPlayableBoard(form, live, stage) || AlreadyAttempted(form, live, stage)) continue;
                 var piece = FindHero(live, form);
                 if (piece == null || !HouseRules.TryValidateLocalHero(live, piece, out _)) continue;
                 // Never replace a different form or different character,
                 // and never resurrect a fallen/downed hero.
-                if (!IsOwnedPiece(form, piece, false, form.OriginalKey))
-                { carry.Remove(form); i--; continue; }
+                if (!MatchesCharacter(form, live.State, piece)) continue;
                 try { HeroForms.ValidatePiece(live.State, live.Board, piece); }
                 catch { continue; } // Wait for a living hero's turn.
                 var id = formIdCtor.Invoke(new object[] { form.FormId, form.FormGuid });
@@ -435,7 +599,7 @@ internal static class HeroFormPersistence
                     .Invoke(live.Registry, new[] { id }) as UObject;
                 if (registered == null || Key(Call(registered, "get_PieceTypeId")) != form.FormKey ||
                     Call(registered, "get_PlayerControllable") is not bool normalHero || normalHero)
-                { carry.Remove(form); i--; continue; }
+                { continue; } // A location may not register this creature yet.
                 try { HeroForms.ValidateFormFit(live.Board, piece, registered); }
                 catch (Exception ex)
                 {
@@ -450,9 +614,13 @@ internal static class HeroFormPersistence
                 // Same native path as a confirmed manual transformation,
                 // including the new enemy deck and hand refresh.
                 HeroForms.Queue(live, piece, registered, id, automatic: true);
-                carry.Remove(form);
-                Status = carry.Count == 0 ? "Enemy form restoration queued." : carry.Count + " more enemy form(s) waiting.";
-                ctx.Log.LogInfo("BMF hero form carry-over: queued " + form.FormName + " for " + form.Sheet + ".");
+                // Only a matching native spawn consumes the choice. If this
+                // request is rejected, keep it for a later adventure, but
+                // do not flood the current board with repeat attempts.
+                form.AttemptSession = Get(live.State, "sessionId") as string;
+                form.AttemptStage = stage;
+                if (carry.Contains(form)) Status = "Restoration requested for " + form.FormName + "; check log if not applied.";
+                ctx.Log.LogInfo("BMF hero form carry-over: queued " + form.FormName + " for the matching character.");
                 return;
             }
         }
