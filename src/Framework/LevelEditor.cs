@@ -259,7 +259,9 @@ internal sealed class LevelEditor
     {
         selectedTile = null; confirming = false;
         if (!plugin.VerifiedGame) { Clear(); status = "Unverified game build."; return; }
-        if (!HouseRules.TryGetLevelEditorContext(out var live, out var reason))
+        Context live;
+        string reason;
+        if (!(showForms ? HouseRules.TryGetHeroFormsContext(out live, out reason) : HouseRules.TryGetLevelEditorContext(out live, out reason)))
         {
             Clear();
             status = reason;
@@ -610,11 +612,17 @@ internal sealed class LevelEditor
         removalTarget = null; heroTarget = null;
         try
         {
-            if (!HouseRules.TryGetLevelEditorContext(out var live, out var reason))
+            bool heroForm = mapMode == 3;
+            if (heroForm != showForms) throw new InvalidOperationException("Map tool changed; select again.");
+            Context live;
+            string reason;
+            if (!(heroForm ? HouseRules.TryGetHeroFormsContext(out live, out reason) : HouseRules.TryGetLevelEditorContext(out live, out reason)))
                 throw new InvalidOperationException(reason);
             if (snapshot == null || !snapshot.SameSession(live))
                 throw new InvalidOperationException("Campaign changed; return to editor and refresh.");
-            if (!HouseRules.TryGetLevelEditorPicker(live, out var handler, out reason))
+            object handler;
+            if (!(heroForm ? HouseRules.TryGetHeroFormsPicker(live, out handler, out reason) :
+                HouseRules.TryGetLevelEditorPicker(live, out handler, out reason)))
                 throw new InvalidOperationException(reason);
             RequireMapIdle(handler);
             var cameraRoot = Call(Get(handler, "cameraControlModel"), "get_ActiveCamera");
@@ -682,12 +690,12 @@ internal sealed class LevelEditor
         try
         {
             if (!showForms || !plugin.HeroFormsEnabled) throw new InvalidOperationException("Hero Forms disabled or tab changed.");
-            if (heroTarget == null || !HouseRules.TryGetLevelEditorContext(out var live, out _) || !command.Snapshot.SameSession(live))
+            if (heroTarget == null || !HouseRules.TryGetHeroFormsContext(out var live, out _) || !command.Snapshot.SameSession(live))
                 throw new InvalidOperationException("Hero form target or session changed.");
             var reader = new BoardReader(live);
             var hero = ValidateHeroTarget(live, reader, reader.Read(command.Tile.X, command.Tile.Y));
             if (!heroTarget.SamePiece(hero)) throw new InvalidOperationException("Hero moved or changed; select again.");
-            if (!HouseRules.TryGetLevelEditorPicker(live, out var handler, out var reason)) throw new InvalidOperationException(reason);
+            if (!HouseRules.TryGetHeroFormsPicker(live, out var handler, out var reason)) throw new InvalidOperationException(reason);
             RequireMapIdle(handler);
             if (!ValidateFormDefinition(live, ResolveConfig(live), command.Enemy.Definition, out var id, out var key) || key != command.Enemy.Key)
                 throw new InvalidOperationException("Creature definition no longer registered.");

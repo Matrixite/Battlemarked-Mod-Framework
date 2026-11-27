@@ -51,7 +51,7 @@ foreach (bool houseRulesEnabled in new[] { false, true })
 foreach (bool heroFormsEnabled in new[] { false, true })
 {
     Check(MenuModuleVisibility.IsTabVisible("Hero Forms", developerMode, houseRulesEnabled, heroFormsEnabled) ==
-        (developerMode && heroFormsEnabled), "Hero Forms requires independent enable and developer mode");
+        heroFormsEnabled, "Hero Forms follows only its own switch");
     Check(MenuModuleVisibility.IsTabVisible("Level Editor", developerMode, houseRulesEnabled, heroFormsEnabled) ==
         developerMode, "Hero Forms switch does not hide Level Editor");
 }

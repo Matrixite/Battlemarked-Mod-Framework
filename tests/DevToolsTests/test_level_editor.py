@@ -12,7 +12,7 @@ class LevelEditorTests(unittest.TestCase):
 
     def test_local_scope_guard(self):
         rules = (SRC / "HouseRules.cs").read_text()
-        guard = rules[rules.index('internal static bool TryGetLevelEditorContext'):rules.index('internal static bool TryGetDebugRoomForPieceId')]
+        guard = rules[rules.index('private static bool EditorFeatureEnabled'):rules.index('internal static bool TryGetDebugRoomForPieceId')]
         for check in ('VerifiedGame', 'DeveloperModeEnabled', 'mainThread', 'RetainCapture', 'modelFromHud', 'TryGetLocalRoom', 'SessionRejection', 'HouseRules.model', 'get_IsLoaded'):
             self.assertIn(check, guard)
         self.assertNotIn('r.model,', guard)

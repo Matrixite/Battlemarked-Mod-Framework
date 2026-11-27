@@ -32,8 +32,10 @@ internal static class HeroForms
     private static Type Logic(string name) => Load("GameLogic", "Jade.GameLogic." + name);
     private static object Get(object obj, string name) => DebugWorkspace.ReadMember(obj, name);
     private static object Call(object obj, string name) => DebugWorkspace.Call(obj, name);
+    // Read-only capture is retained even while Hero Forms is disabled; only
+    // the explicit feature switch authorizes a transformation request.
     private static bool CaptureAllowed => ctx != null && Plugin.Instance?.VerifiedGame == true &&
-        Plugin.Instance?.DeveloperModeEnabled == true && Environment.CurrentManagedThreadId == mainThread;
+        Environment.CurrentManagedThreadId == mainThread;
     private static bool Active => CaptureAllowed && Plugin.Instance?.HeroFormsEnabled == true;
     private static HarmonyMethod Hook(string name) => new HarmonyMethod(typeof(HeroForms).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static));
     private static MethodInfo Exact(Type type, string name, bool isStatic, Type result, params Type[] args)
@@ -197,7 +199,7 @@ internal static class HeroForms
         if (Plugin.Instance?.HeroFormsEnabled != true) throw new InvalidOperationException("Hero Forms disabled in Mods.");
         if (!Active || transform == null) throw new InvalidOperationException(Status);
         if (Waiting) throw new InvalidOperationException("A hero form request is already pending.");
-        if (!HouseRules.TryGetLevelEditorContext(out var live, out var reason) || !context.SameSession(live) ||
+        if (!HouseRules.TryGetHeroFormsContext(out var live, out var reason) || !context.SameSession(live) ||
             !HouseRules.TryValidateLocalHero(live, piece, out reason))
             throw new InvalidOperationException("Hero form rejected: " + reason);
         ValidatePiece(live.State, live.Board, piece);
@@ -215,7 +217,7 @@ internal static class HeroForms
         var message = commandType.GetConstructor(new[] { typeof(string) })?.Invoke(new object[] { command.Token });
         var request = LevelEditor.CheckedRequest(message, commandType, requestType);
         var send = Exact(Load("Jade.Networking", "Jade.Networking.LocalNetworkRoom"), "Send", false, typeof(void), requestType);
-        if (!HouseRules.TryGetLevelEditorContext(out var final, out reason) || !live.SameSession(final))
+        if (!HouseRules.TryGetHeroFormsContext(out var final, out reason) || !live.SameSession(final))
             throw new InvalidOperationException("Session changed before hero form dispatch.");
         pending = command;
         Status = "Hero form request submitted; waiting for native handler.";
@@ -237,7 +239,7 @@ internal static class HeroForms
             if (msg == null || Call(msg, "get_Command") is not string token || token != command.Token) return true;
             pending = null; // Consume once, before validation or invoking native logic.
             if (DateTime.UtcNow > command.Expires ||
-                !HouseRules.TryGetLevelEditorContext(out var live, out _) || !command.Context.SameSession(live) ||
+                !HouseRules.TryGetHeroFormsContext(out var live, out _) || !command.Context.SameSession(live) ||
                 __instance is not Il2CppObjectBase handler || !handlers.TryGetValue(handler.Pointer, out var state) ||
                 !MatchState(state, command) || !helpers.TryGetValue(state.Pointer, out var helper))
                 throw new InvalidOperationException("Native request no longer matches the confirmed session.");

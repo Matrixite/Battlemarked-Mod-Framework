@@ -720,7 +720,7 @@ internal sealed class HouseRules : BattlemarkedModule
     private static void CaptureDebugBoardPicker(object __instance)
     {
         var r = running;
-        if (r == null || r.faulted || Plugin.Instance?.DeveloperModeEnabled != true ||
+        if (r == null || r.faulted || (Plugin.Instance?.DeveloperModeEnabled != true && Plugin.Instance?.HeroFormsEnabled != true) ||
             Environment.CurrentManagedThreadId != r.mainThread) return;
         try
         {
@@ -731,12 +731,22 @@ internal sealed class HouseRules : BattlemarkedModule
         catch { r.debugBoardHandler = null; }
     }
 
-    internal static bool TryGetLevelEditorPicker(LevelEditor.Context context, out object handler, out string reason)
+    // The features share the read-only picker but never each other's authorization.
+    private static bool EditorFeatureEnabled(bool heroForms) =>
+        heroForms ? Plugin.Instance?.HeroFormsEnabled == true : Plugin.Instance?.DeveloperModeEnabled == true;
+
+    internal static bool TryGetLevelEditorPicker(LevelEditor.Context context, out object handler, out string reason) =>
+        TryGetBoardPicker(false, context, out handler, out reason);
+
+    internal static bool TryGetHeroFormsPicker(LevelEditor.Context context, out object handler, out string reason) =>
+        TryGetBoardPicker(true, context, out handler, out reason);
+
+    private static bool TryGetBoardPicker(bool heroForms, LevelEditor.Context context, out object handler, out string reason)
     {
         handler = null;
         reason = "Current desktop board picker unavailable; wait for the board to load.";
         var r = running;
-        if (r == null || r.faulted || Plugin.Instance?.DeveloperModeEnabled != true ||
+        if (r == null || r.faulted || !EditorFeatureEnabled(heroForms) ||
             Plugin.Instance?.VerifiedGame != true || Environment.CurrentManagedThreadId != r.mainThread ||
             context == null || r.debugBoardHandlerScene != context.Scene ||
             (long)UnityEngine.Time.frameCount - r.debugBoardHandlerFrame < 0 ||
@@ -761,12 +771,19 @@ internal sealed class HouseRules : BattlemarkedModule
         catch (Exception ex) { reason = ex.GetBaseException().Message; return false; }
     }
 
-    internal static bool TryGetLevelEditorContext(out LevelEditor.Context context, out string reason)
+    internal static bool TryGetLevelEditorContext(out LevelEditor.Context context, out string reason) =>
+        TryGetEditorContext(false, out context, out reason);
+
+    internal static bool TryGetHeroFormsContext(out LevelEditor.Context context, out string reason) =>
+        TryGetEditorContext(true, out context, out reason);
+
+    private static bool TryGetEditorContext(bool heroForms, out LevelEditor.Context context, out string reason)
     {
         context = null;
-        reason = "Start a local solo campaign with House rules and Developer mode enabled.";
+        reason = heroForms ? "Start a local solo campaign with House rules running and Hero Forms enabled." :
+            "Start a local solo campaign with House rules and Developer mode enabled.";
         var r = running;
-        if (r == null || r.faulted || Plugin.Instance?.DeveloperModeEnabled != true ||
+        if (r == null || r.faulted || !EditorFeatureEnabled(heroForms) ||
             Plugin.Instance?.VerifiedGame != true || Environment.CurrentManagedThreadId != r.mainThread ||
             !r.modelFromHud || HouseRules.model == null) return false;
         try
@@ -815,7 +832,7 @@ internal sealed class HouseRules : BattlemarkedModule
 
     internal static bool TryValidateLocalHero(LevelEditor.Context context, object piece, out string reason)
     {
-        if (!TryGetLevelEditorContext(out var live, out reason) || context == null || !context.SameSession(live)) return false;
+        if (!TryGetHeroFormsContext(out var live, out reason) || context == null || !context.SameSession(live)) return false;
         try { reason = running.Scope(piece); return reason == "local solo hero"; }
         catch (Exception ex) { reason = ex.GetBaseException().Message; return false; }
     }
@@ -1186,7 +1203,9 @@ internal sealed class HouseRules : BattlemarkedModule
     public override void OnSceneChanged(SceneInfo info) => SyncScene(info.Handle, info.Name);
     public override void OnUpdate()
     {
-        if (Plugin.Instance?.DeveloperModeEnabled != true) { HeroForms.Cancel(); debugCardRegistries.Clear(); debugSpawnContexts.Clear(); debugBoardHandler = null; }
+        if (Plugin.Instance?.HeroFormsEnabled != true) HeroForms.Cancel();
+        if (Plugin.Instance?.DeveloperModeEnabled != true) { debugCardRegistries.Clear(); debugSpawnContexts.Clear(); }
+        if (Plugin.Instance?.DeveloperModeEnabled != true && Plugin.Instance?.HeroFormsEnabled != true) debugBoardHandler = null;
         ConsumeUnverifiedHealthTransition();
         if (requestedRefundMode != refundMode && (DateTime.UtcNow - lastModeCheck).TotalSeconds >= 1)
             TryApplyModeChange();

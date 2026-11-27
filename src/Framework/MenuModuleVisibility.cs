@@ -8,7 +8,7 @@ internal static class MenuModuleVisibility
         if (title == null) return false; // Reserved tab IDs are not shown.
         if (title == "Reports" || title == "Dev Tools") return developerMode;
         if (title == "Level Editor") return developerMode;
-        if (title == "Hero Forms") return developerMode && heroFormsEnabled;
+        if (title == "Hero Forms") return heroFormsEnabled;
         if (title == "House Rules" || title == "Presets") return houseRulesEnabled;
         return true;
     }

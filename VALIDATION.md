@@ -1,8 +1,12 @@
-# v0.6.26-alpha validation
+# v0.6.27-alpha validation
 
 ## First stable release automation
 
 The 12 Python release-gate and simulated publication tests pass locally. These cover the current alpha skip, exact stable-version eligibility, inconsistent version rejection, wrong branch refusal, mismatched tag refusal, versioned source archive and matching SHA-256 checksum, and repeated-run protection. The publication tests use a temporary local Git remote and mock GitHub CLI; they do not create a real release. The hosted workflow is configured to run the .NET 8 core tests before publication; dotnet and the Windows game environment are unavailable here. Real GitHub Actions execution and Windows/gameplay acceptance remain unverified. No framework version, gameplay behavior or updater code changes are included in this automation.
+
+## v0.6.27 independent Hero Forms switch
+
+The changed tab/dispatch regressions and three additional source tests fail against v0.6.26 and pass with the independent feature authorization. Tests cover the menu visibility, tick and toolbar path, developer-independent hero context/picker/request, retained read-only capture, disabled-request cancellation and continued developer-only spawn/removal guards. CoreTests matrix now expects Hero Forms visibility to follow only its switch for both Developer mode states. All 42 Python Dev Tools and release checks pass. The Windows game SDK and dotnet are unavailable in this runner; live verification remains pending: with Developer mode off and House rules running, toggle Hero Forms on/off in Mods and check visibility, refresh forms, select/confirm a hero in a disposable solo campaign; verify Level Editor/Dev Tools stay hidden and multiplayer cannot dispatch.
 
 ## v0.6.26 combined House Rules tab
 

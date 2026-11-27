@@ -12,7 +12,7 @@ class HeroFormTests(unittest.TestCase):
     def test_authoritative_native_transform_only(self):
         source = (SRC / "HeroForms.cs").read_text()
         for token in ("RequestHandlerDebugCommandFactory", "SpawnHeroPieceForPlayers", "SwapPieceHelper", "TransformIntoNewPiece",
-                      "TryGetLevelEditorContext", "SameSession", "sessionId", "hostPlayerId", "characterSheetId",
+                      "TryGetHeroFormsContext", "SameSession", "sessionId", "hostPlayerId", "characterSheetId",
                       "isPlayerControlled", "IsCurrentPiece", "GetPieceDefinition", "GetPiece", "Guid.NewGuid", "pending = null"):
             self.assertIn(token, source)
         self.assertNotIn("SetValue(", source)
@@ -31,7 +31,7 @@ class HeroFormTests(unittest.TestCase):
         menu = (SRC / "ModMenu.cs").read_text()
         policy = (SRC / "MenuModuleVisibility.cs").read_text()
         self.assertIn('"Level Editor", "Hero Forms"', menu)
-        self.assertIn('if (title == "Hero Forms") return developerMode && heroFormsEnabled;', policy)
+        self.assertIn('if (title == "Hero Forms") return heroFormsEnabled;', policy)
         self.assertIn('houseRulesEnabled, heroFormsEnabled.Value)', menu)
         self.assertIn('config.Bind("Menu", "HeroFormsEnabled"', menu)
         toggle = menu[menu.index('if (GUI.Button', menu.index('Label(125, "Hero forms')):menu.index('int rows', menu.index('Label(125, "Hero forms'))]
@@ -44,7 +44,7 @@ class HeroFormTests(unittest.TestCase):
         editor = (SRC / "LevelEditor.cs").read_text()
         self.assertIn('if (tab == 9)', menu)
         self.assertIn('levelEditor.DrawHeroForms(x, y, width, height)', menu)
-        self.assertIn('(tab == 8 || tab == 9', menu)
+        self.assertIn('(tab == 8 && DeveloperModeEnabled || tab == 9 && HeroFormsEnabled)', menu)
         normal = editor[editor.index('internal void Draw(float'):editor.index('internal void DrawHeroForms')]
         self.assertNotIn('Transform hero', normal)
         self.assertNotIn('showForms ? "Enemy list"', normal)
@@ -67,3 +67,37 @@ class HeroFormTests(unittest.TestCase):
         # live re-enable can use the current session rather than force restart.
         capture = source[source.index('private static void CaptureHandler'):source.index('private static string Session')]
         self.assertEqual(capture.count('if (!CaptureAllowed) return;'), 2)
+
+    def test_hero_forms_tick_and_draw_ignore_developer_mode(self):
+        menu = (SRC / "ModMenu.cs").read_text()
+        self.assertIn('if (tab == 9) levelEditor.Tick(HeroFormsEnabled && open, true);', menu)
+        self.assertIn('if (HeroFormsEnabled) levelEditor.DrawHeroForms(x, y, width, height);', menu)
+        source = (SRC / "HeroForms.cs").read_text()
+        capture = source[source.index('private static bool CaptureAllowed'):source.index('private static HarmonyMethod Hook')]
+        self.assertNotIn('DeveloperModeEnabled', capture)
+
+    def test_form_requests_and_picker_have_separate_feature_guards(self):
+        rules = (SRC / "HouseRules.cs").read_text()
+        editor = (SRC / "LevelEditor.cs").read_text()
+        self.assertIn('TryGetEditorContext(false, out context, out reason)', rules)
+        self.assertIn('TryGetEditorContext(true, out context, out reason)', rules)
+        self.assertIn('TryGetBoardPicker(false, context, out handler, out reason)', rules)
+        self.assertIn('TryGetBoardPicker(true, context, out handler, out reason)', rules)
+        self.assertIn('heroForms ? Plugin.Instance?.HeroFormsEnabled == true : Plugin.Instance?.DeveloperModeEnabled == true', rules)
+        form = editor[editor.index('private void TransformHero'):editor.index('private static RemovalTarget ValidateRemovalTarget')]
+        self.assertIn('TryGetHeroFormsContext', form)
+        self.assertIn('TryGetHeroFormsPicker', form)
+        self.assertNotIn('TryGetLevelEditorContext', form)
+        spawn = editor[editor.index('private void Spawn('):editor.index('private static void RequireMapIdle')]
+        remove = editor[editor.index('private void Remove('):editor.index('internal bool DrawMapTool()')]
+        for action in (spawn, remove):
+            self.assertIn('TryGetLevelEditorContext', action)
+            self.assertNotIn('TryGetHeroFormsContext', action)
+
+    def test_developer_mode_off_keeps_shared_picker_and_hero_requests_live(self):
+        rules = (SRC / "HouseRules.cs").read_text()
+        capture = rules[rules.index('private static void CaptureDebugBoardPicker'):rules.index('internal static bool TryGetLevelEditorPicker')]
+        self.assertIn('Plugin.Instance?.DeveloperModeEnabled != true && Plugin.Instance?.HeroFormsEnabled != true', capture)
+        update = rules[rules.index('public override void OnUpdate()'):rules.index('private void Write()')]
+        self.assertIn('if (Plugin.Instance?.HeroFormsEnabled != true) HeroForms.Cancel();', update)
+        self.assertIn('if (Plugin.Instance?.DeveloperModeEnabled != true && Plugin.Instance?.HeroFormsEnabled != true) debugBoardHandler = null;', update)

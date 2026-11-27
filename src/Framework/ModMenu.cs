@@ -49,7 +49,7 @@ internal sealed class ModMenu
         levelEditor = new LevelEditor(plugin, log);
         enabled = config.Bind("Menu", "Enabled", true, "Enable experimental desktop mod manager.");
         developerMode = config.Bind("Menu", "DeveloperMode", false, "Show built-in diagnostic and example modules, Reports, Dev Tools and Level Editor. Disabling also closes a native debug menu opened through BMF; module settings are unchanged.");
-        heroFormsEnabled = config.Bind("Menu", "HeroFormsEnabled", true, "Show the experimental Hero Forms tab and allow verified local transformations. Developer mode and running House rules are still required. Applies immediately.");
+        heroFormsEnabled = config.Bind("Menu", "HeroFormsEnabled", true, "Show the experimental Hero Forms tab and allow verified local transformations. Running House rules are required; Developer mode is not needed. Applies immediately.");
         open = config.Bind("Menu", "StartOpen", false, "Open menu automatically; fallback if F10 is unavailable.").Value;
         savedX = config.Bind("Menu", "PositionX", -1, "Last menu left position in pixels; -1 centers horizontally.");
         savedY = config.Bind("Menu", "PositionY", -1, "Last menu top position in pixels; -1 centers vertically.");
@@ -143,7 +143,7 @@ internal sealed class ModMenu
             try { usingPolling = true; if (poll()) SetOpen(!open); }
             catch (Exception ex) { poll = null; usingPolling = false; log.LogWarning("BMF hotkey polling unavailable; using GUI keyboard events: " + ex.Message); }
         }
-        if (tab == 9) levelEditor.Tick(DeveloperModeEnabled && HeroFormsEnabled && open, true);
+        if (tab == 9) levelEditor.Tick(HeroFormsEnabled && open, true);
         else levelEditor.Tick(developerMode.Value && enabled.Value && !broken && open && tab == 8);
     }
     private void DrawUpdateWarning(float x, float y, float width)
@@ -186,7 +186,7 @@ internal sealed class ModMenu
             }
             if (!open) return;
             // Compact targeting toolbar exposes the actual 3D map.
-            if ((tab == 8 || tab == 9 && HeroFormsEnabled) && developerMode.Value && levelEditor.DrawMapTool()) return;
+            if ((tab == 8 && DeveloperModeEnabled || tab == 9 && HeroFormsEnabled) && levelEditor.DrawMapTool()) return;
             float width = Math.Min(800f, Screen.width - 24f), height = Math.Min(530f, Screen.height - 24f);
             if (width < 460f || height < 410f) { FinishDrag(); return; }
             float x = position.X(Screen.width, width), y = position.Y(Screen.height, height);
@@ -362,7 +362,7 @@ internal sealed class ModMenu
 
             if (tab == 9)
             {
-                if (DeveloperModeEnabled && HeroFormsEnabled) levelEditor.DrawHeroForms(x, y, width, height);
+                if (HeroFormsEnabled) levelEditor.DrawHeroForms(x, y, width, height);
                 return;
             }
 
@@ -373,7 +373,7 @@ internal sealed class ModMenu
             // Hero Forms is a live feature preference, not a restart-only module.
             // Keep its switch visible even when Developer mode is off.
             Label(125, "Hero forms (experimental)");
-            GUI.Label(new Rect(x + 15, y + 147, width - 120, 23), (heroFormsEnabled.Value ? "ON" : "OFF") + " | Live; Dev mode + House rules needed");
+            GUI.Label(new Rect(x + 15, y + 147, width - 120, 23), (heroFormsEnabled.Value ? "ON" : "OFF") + " | Live; House rules needed");
             if (GUI.Button(new Rect(x + width - 105, y + 132, 93, 27), heroFormsEnabled.Value ? "Disable" : "Enable"))
             {
                 try
@@ -381,7 +381,7 @@ internal sealed class ModMenu
                     heroFormsEnabled.Value = !heroFormsEnabled.Value;
                     if (!heroFormsEnabled.Value) { HeroForms.Cancel(); levelEditor.Leave(); }
                     config.Save();
-                    message = heroFormsEnabled.Value ? "Hero Forms enabled. Turn on Developer mode to show the tab." : "Hero Forms disabled; pending form requests cancelled.";
+                    message = heroFormsEnabled.Value ? "Hero Forms enabled; tab available now." : "Hero Forms disabled; pending form requests cancelled.";
                 }
                 catch (Exception ex) { message = "Could not save Hero Forms setting; see BepInEx log."; log.LogWarning(ex.Message); }
             }
@@ -408,7 +408,7 @@ internal sealed class ModMenu
                 try
                 {
                     developerMode.Value = !developerMode.Value;
-                    if (!developerMode.Value) { nativeDebugMenu.CloseOwned(); HeroForms.Cancel(); levelEditor.Leave(); }
+                    if (!developerMode.Value) nativeDebugMenu.CloseOwned();
                     page = 0;
                     config.Save();
                     message = developerMode.Value ? "Development modules, Reports, Dev Tools and Level Editor visible." : "Development modules, Reports, Dev Tools and Level Editor hidden.";
