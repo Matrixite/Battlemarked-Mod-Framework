@@ -16,6 +16,7 @@ internal sealed class MenuModule
 internal sealed class ModMenu
 {
     private readonly Plugin plugin;
+    private readonly NativeDebugMenu nativeDebugMenu;
     private readonly ManualLogSource log;
     private readonly ConfigEntry<bool> enabled, developerMode;
     private readonly ConfigFile config;
@@ -24,7 +25,7 @@ internal sealed class ModMenu
     private bool open, broken, guiSeen, usingPolling;
     private int page;
     private int tab;
-    private static readonly string[] Tabs = { "Overview", "AP rules", "Health", "Presets", "Mods", "Reports", "Updates" };
+    private static readonly string[] Tabs = { "Overview", "AP rules", "Health", "Presets", "Mods", "Reports", "Updates", "Dev Tools" };
     private string message = "Settings apply on next launch.";
     private Func<bool> poll;
     private bool inputChecked;
@@ -39,8 +40,9 @@ internal sealed class ModMenu
     internal ModMenu(Plugin plugin, ConfigFile config, ManualLogSource log)
     {
         this.plugin = plugin; this.log = log; this.config = config;
+        nativeDebugMenu = new NativeDebugMenu(plugin, log);
         enabled = config.Bind("Menu", "Enabled", true, "Enable experimental desktop mod manager.");
-        developerMode = config.Bind("Menu", "DeveloperMode", false, "Show built-in diagnostic and example modules and the Reports tab. Visibility only; module settings are unchanged.");
+        developerMode = config.Bind("Menu", "DeveloperMode", false, "Show built-in diagnostic and example modules, Reports and Dev Tools. Disabling also closes a native debug menu opened through BMF; module settings are unchanged.");
         open = config.Bind("Menu", "StartOpen", false, "Open menu automatically; fallback if F10 is unavailable.").Value;
         savedX = config.Bind("Menu", "PositionX", -1, "Last menu left position in pixels; -1 centers horizontally.");
         savedY = config.Bind("Menu", "PositionY", -1, "Last menu top position in pixels; -1 centers vertically.");
@@ -121,6 +123,7 @@ internal sealed class ModMenu
     }
     internal void Tick()
     {
+        if (!developerMode.Value) nativeDebugMenu.CloseOwned();
         if (!enabled.Value || broken) return;
         if (!inputChecked) { inputChecked = true; ResolveInput(); }
         if (poll == null) return;
@@ -303,6 +306,25 @@ internal sealed class ModMenu
                 return;
             }
 
+            if (tab == 7)
+            {
+                Label(97, "Dev Tools | experimental native game debug menu");
+                Label(128, "Use only in a disposable local solo game. Back up saves first.");
+                Label(159, "The native menu can contain commands that change game state.");
+                if (!plugin.VerifiedGame) { Label(190, "Unavailable: unverified game build."); return; }
+                if (developerMode.Value && Button(193, "Show game debug menu"))
+                {
+                    if (nativeDebugMenu.SetVisible(true)) SetOpen(false);
+                }
+                if (developerMode.Value && Button(227, "Hide game debug menu"))
+                    nativeDebugMenu.SetVisible(false);
+                Label(267, "Press F10 to return to the mod manager.");
+                Label(298, "Opening is session-only; no debug setting is saved.");
+                Label(329, "Status:");
+                Label(355, nativeDebugMenu.Status);
+                return;
+            }
+
             var modules = new List<MenuModule>();
             foreach (var m in plugin.MenuModules)
                 if (MenuModuleVisibility.IsVisible(m.Id, developerMode.Value)) modules.Add(m);
@@ -330,9 +352,10 @@ internal sealed class ModMenu
                 try
                 {
                     developerMode.Value = !developerMode.Value;
+                    if (!developerMode.Value) nativeDebugMenu.CloseOwned();
                     page = 0;
                     config.Save();
-                    message = developerMode.Value ? "Development modules and Reports visible." : "Development modules and Reports hidden.";
+                    message = developerMode.Value ? "Development modules, Reports and Dev Tools visible." : "Development modules, Reports and Dev Tools hidden.";
                 }
                 catch (Exception ex)
                 {

@@ -1,8 +1,14 @@
-# v0.6.13-alpha validation
+# v0.6.14-alpha validation
 
 ## First stable release automation
 
 The 12 Python release-gate and simulated publication tests pass locally. These cover the current alpha skip, exact stable-version eligibility, inconsistent version rejection, wrong branch refusal, mismatched tag refusal, versioned source archive and matching SHA-256 checksum, and repeated-run protection. The publication tests use a temporary local Git remote and mock GitHub CLI; they do not create a real release. The hosted workflow is configured to run the .NET 8 core tests before publication; dotnet and the Windows game environment are unavailable here. Real GitHub Actions execution and Windows/gameplay acceptance remain unverified. No framework version, gameplay behavior or updater code changes are included in this automation.
+
+## v0.6.14 Dev Tools (experimental)
+
+Confirmed the uploaded GameAssembly SHA-256 matches the existing verified-build guard. Metadata and native code inspection identify a Unity component, `Jade.DebugMenu.DebugMenu`, with compiled no-argument ShowDebugMenu and HideDebugMenu methods. BMF only invokes these methods on an existing, unambiguous loaded scene instance. Source regression tests pass; the CoreTests visibility matrix includes Dev Tools. Runtime activation, the existence of a scene instance in the installed player, and Windows compilation remain unverified.
+
+Acceptance: with Developer mode OFF, Dev Tools is absent; turn it ON and verify Dev Tools appears regardless of House rules settings. In a disposable local solo game, use Show game debug menu; the native menu should appear and BMF should close, or an unavailable reason should be displayed. Use F10 to reopen BMF, hide the debug menu, and verify the native UI closes. Repeat across a scene change and turn Developer mode OFF to verify the framework-owned native menu closes and Dev Tools disappears. Check that Mods, Reports, Updates and existing rules still work. No automatic release is made for this alpha.
 
 ## v0.6.13 update warning
 
