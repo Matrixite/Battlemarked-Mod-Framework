@@ -153,8 +153,8 @@ internal static class HeroForms
         !string.IsNullOrWhiteSpace(command.Session) && Session(state) == command.Session &&
         Call(Get(state, "hostPlayerId"), "get_Id") is ulong host && host == command.Owner;
 
-    // Current-turn, healthy, ordinary 1x1 local hero only. No nested transforms
-    // until native revert behavior has been accepted in-game.
+    // Any healthy, ordinary 1x1 local party hero during an idle player turn.
+    // No nested transforms until native revert behavior has been accepted in-game.
     internal static void ValidatePiece(object state, object board, object piece)
     {
         if (piece is not Il2CppObjectBase native || native.Pointer == IntPtr.Zero ||
@@ -179,9 +179,20 @@ internal static class HeroForms
         var size = Exact(Model("PieceSizeHelper"), "GetPieceTileSize", true, Model("IntPoint2D"), type).Invoke(null, new[] { piece });
         if ((int)Get(size, "x") != 1 || (int)Get(size, "y") != 1)
             throw new InvalidOperationException("Only 1x1 heroes supported.");
-        if (Exact(Model("BoardHelpers"), "IsCurrentPiece", true, typeof(bool), Model("Board"), Model("PieceId"))
-            .Invoke(null, new[] { board, Get(piece, "pieceId") }) is not bool current || !current)
-            throw new InvalidOperationException("Wait until this hero's turn.");
+        // Native SpawnPieces replaces the old piece at its actual turn-queue
+        // index. It need not be the current index; preserve the active turn
+        // and refuse pieces outside the live queue or an enemy's turn.
+        var queue = Get(board, "turnQueue");
+        if (Exact(Model("TurnQueue"), "GetTurnOrderForPiece", false, typeof(int), Model("PieceId"))
+            .Invoke(queue, new[] { Get(piece, "pieceId") }) is not int index || index < 0)
+            throw new InvalidOperationException("Hero is not in the current turn order.");
+        var args = new object[] { board, null };
+        if (Exact(Model("BoardHelpers"), "TryGetCurrentPiece", true, typeof(bool), Model("Board"), type.MakeByRefType())
+            .Invoke(null, args) is not bool current || !current || args[1] == null ||
+            Get(args[1], "team")?.ToString() != "Players" ||
+            Get(args[1], "isPlayerControlled") is not bool currentControlled || !currentControlled ||
+            Owner(args[1]) != Owner(piece))
+            throw new InvalidOperationException("Wait until a local hero's turn.");
     }
 
     // The native size helper understands square monsters and rotated

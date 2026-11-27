@@ -605,7 +605,7 @@ internal sealed class LevelEditor
         mapMode = mode;
         selectedTile = null; removalTarget = null; confirming = false;
         pending = null; pendingRemoval = null; pendingForm = null; heroTarget = null; mapPickRequested = false; refresh = pan = false;
-        status = mode == 1 ? "Middle-click a free tile on the 3D board." : mode == 3 ? "Middle-click the hero whose turn it is." : mode == 4 ? "Middle-click a living enemy to move." : "Middle-click an enemy or destructible prop.";
+        status = mode == 1 ? "Middle-click a free tile on the 3D board." : mode == 3 ? "Middle-click any eligible hero in your party." : mode == 4 ? "Middle-click a living enemy to move." : "Middle-click an enemy or destructible prop.";
     }
 
     private void EndMapTool()
@@ -1112,7 +1112,7 @@ internal sealed class LevelEditor
             GUI.Label(new Rect(x + 84, y + footer - 25, inner - 140, 23), (enemyPage + 1) + "/" + pages + " | " + matches.Count + " forms");
             if (GUI.Button(new Rect(x + 15 + inner - 65, y + footer - 25, 65, 24), ">")) enemyPage = Math.Min(pages - 1, enemyPage + 1);
             Label(footer, "Hero form: " + (selectedEnemy?.Name ?? "select registered creature or boss from list"));
-            Label(footer + 24, "Select a form, press Transform hero, then middle-click your current hero.");
+            Label(footer + 24, "Select a form, press Transform hero, then middle-click any eligible hero during a player turn.");
             Label(footer + 48, "Large forms need open space. Native rules may change cards and stats.");
             Label(height - 27, status);
         }

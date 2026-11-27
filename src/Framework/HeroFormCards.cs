@@ -341,7 +341,7 @@ internal static class HeroFormCards
             // SpawnPieceInternal has not yet returned to SpawnPieces, so the
             // next PieceSnapshot already contains the new hand and IDs.
             inventorySetter.Invoke(piece, new object[] { staged });
-            HeroFormHandRefresh.Queue(ticket.Context, piece, ticket.Owner, ticket.Sheet, ticket.FormKey, instanceIds);
+            HeroFormHandRefresh.Queue(ticket.Context, piece, ticket.SourceId, ticket.Owner, ticket.Sheet, ticket.FormKey, instanceIds);
             Report("Enemy deck ready: " + ticket.CardIds.Count + " cards for " + ticket.FormName + ".");
         }
         catch (Exception ex)

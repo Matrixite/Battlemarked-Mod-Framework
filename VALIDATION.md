@@ -1,4 +1,10 @@
-# v0.6.31-alpha validation
+# v0.6.32-alpha validation
+
+## v0.6.32 party-wide Hero Forms
+
+User reports Hero Forms appears to work for only one hero. Source inspection confirms that selection, dispatch and the authoritative handler all required IsCurrentPiece, excluding every other party member during that turn. Native metadata/disassembly confirms GameState.transformedPieces is a collection searched by replacement piece ID by SwapPieceHelper.CreateOrUpdateExistingTransformRecord, SpawnPieces calls TurnQueue.GetTurnOrderForPiece on the replaced piece and RemovePieceAtIndexAndReplaceWith, and native GetTurnOrderForPiece returns -1 for a missing entry. The mod now requires a valid target turn-order slot and a locally owned player-controlled current turn, rather than requiring the target itself to be current. Per-piece hand refresh tickets resolve each replacement from the HUD board by ID and preserve unrelated hand selection. Existing local ownership, scope, idle and native footprint checks remain. Two new source contract checks fail against v0.6.31 and pass with these changes; all 58 Python Dev Tools/release checks pass. Native game/Windows compilation and runtime acceptance remain unverified; the user's exact in-game failure mode has not been reproduced.
+
+Acceptance: with three eligible heroes during the first hero's turn, transform a different hero, check current turn/AP and the untouched hand. Transform another hero to a different creature; verify each one's registered cards on their next selection/turn, confirm both remain transformed and then test native reversion separately. Transform the current hero and check immediate hand refresh. Verify blocked footprint, enemy-turn, non-hero, multiplayer and already-transformed targets remain rejected. Check BepInEx and toolbar status if a particular hero still fails.
 
 ## v0.6.31 immediate hand refresh
 

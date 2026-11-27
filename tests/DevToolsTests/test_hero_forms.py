@@ -13,12 +13,25 @@ class HeroFormTests(unittest.TestCase):
         source = (SRC / "HeroForms.cs").read_text()
         for token in ("RequestHandlerDebugCommandFactory", "SpawnHeroPieceForPlayers", "SwapPieceHelper", "TransformIntoNewPiece",
                       "TryGetHeroFormsContext", "SameSession", "sessionId", "hostPlayerId", "characterSheetId",
-                      "isPlayerControlled", "IsCurrentPiece", "GetPieceDefinition", "GetPiece", "Guid.NewGuid", "pending = null"):
+                      "isPlayerControlled", "GetTurnOrderForPiece", "GetPieceDefinition", "GetPiece", "Guid.NewGuid", "pending = null"):
             self.assertIn(token, source)
         self.assertNotIn("SetValue(", source)
         self.assertNotIn("Destroy(", source)
         self.assertIn("isTransformationReversible", source)
         self.assertIn("ref Il2CppSystem.Collections.IEnumerator __result", source)
+    def test_can_transform_any_party_hero_during_a_player_turn(self):
+        source = (SRC / "HeroForms.cs").read_text()
+        validate = source[source.index("internal static void ValidatePiece"):source.index("internal static object FormFootprint")]
+        # Reintroducing a current-piece-only requirement excludes every other
+        # party member. Require a real turn-order slot and an active player
+        # turn instead, retaining the existing native hero/owner checks.
+        self.assertNotIn('"IsCurrentPiece"', validate)
+        self.assertIn('"GetTurnOrderForPiece"', validate)
+        self.assertIn('index < 0', validate)
+        self.assertIn('"TryGetCurrentPiece"', validate)
+        self.assertIn('"isPlayerControlled"', validate)
+        self.assertIn('"hostPlayerId"', validate)
+
     def test_optional_hooks_and_cleanup(self):
         rules = (SRC / "HouseRules.cs").read_text()
         editor = (SRC / "LevelEditor.cs").read_text()

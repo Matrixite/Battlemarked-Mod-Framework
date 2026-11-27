@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.31-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.32-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,10 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.32 — Hero Forms for the whole party
+
+During an idle player turn in a disposable local solo campaign, use **F10 > Hero Forms > Transform hero** and middle-click any eligible living, untransformed locally owned hero in the party. The selected hero no longer has to be the current-turn piece. Transform other heroes individually; multiple independently transformed heroes can coexist. The native transformation replaces the selected hero's existing turn-order slot rather than advancing the turn. The deck is created separately for each replacement. If that hero's hand is displayed, the mod refreshes it after the new snapshot arrives; otherwise its new cards are available on normal selection. The current hero's unrelated hand is not switched. The verified local solo, player-turn/idle, fit, positive-health and no-nested-transform restrictions remain. Gameplay verification is pending.
 
 ## v0.6.31 — immediate enemy hand refresh
 
