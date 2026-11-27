@@ -1,4 +1,10 @@
-# v0.6.27-alpha validation
+# v0.6.28-alpha validation
+
+## v0.6.28 enemy relocation
+
+Four new source regressions fail on v0.6.27 and pass with the direct two-stage map tool, live board and source identity revalidation, native request/coroutine binding, and cancellation lifecycle. Verified the IL2CPP metadata for ForceMovePiece and its ValueTuple<IEnumerator, IProgressMarker> return; the native ForceMoveSinglePieceActionExecutor consumes Item1 as its own return coroutine. Verified native direct teleport and no-correction modes and the GameLogicRunner request handler table. All 46 Dev Tools and release Python checks pass locally. There is no dotnet or Windows game SDK/runtime here: neither compilation nor a successful gameplay move is claimed.
+
+Windows acceptance: enable Developer mode in a disposable local solo campaign, Refresh, Move on map, select a living 1×1 hostile creature and a distant free tile, Confirm move, then verify the same creature appears at that exact tile with the same identity/health and normal AI/turn-order behavior. Try another move, a blocked/occupied tile, a changed or dead source, a large enemy, a hero, a busy action, cancelling/F10, level change, and disabling Developer mode. Confirm no unconsumed request executes after cancellation, and multiplayer cannot dispatch. On failure inspect toolbar status and BepInEx LogOutput.log for the native binding/request reason.
 
 ## First stable release automation
 

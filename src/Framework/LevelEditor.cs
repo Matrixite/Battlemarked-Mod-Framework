@@ -33,7 +33,9 @@ internal sealed class LevelEditor
     private SpawnCommand pending;
     private RemovalCommand pendingRemoval;
     private RemovalTarget removalTarget;
-    // 0 = full editor, 1 = enemy placement, 2 = piece removal, 3 = hero form.
+    private RemovalTarget moveSource;
+    private MoveCommand pendingMove;
+    // 0 = full editor, 1 = enemy placement, 2 = piece removal, 3 = hero form, 4 = move enemy.
     private int mapMode;
     private bool mapPickRequested;
     private float mapClickX, mapClickY;
@@ -94,6 +96,15 @@ internal sealed class LevelEditor
         internal RemovalCommand(Context snapshot, RemovalTarget target) { Snapshot = snapshot; Target = target; }
     }
 
+    private sealed class MoveCommand
+    {
+        internal readonly Context Snapshot;
+        internal readonly RemovalTarget Source;
+        internal readonly TileCell Destination;
+        internal MoveCommand(Context snapshot, RemovalTarget source, TileCell destination)
+        { Snapshot = snapshot; Source = source; Destination = destination; }
+    }
+
     internal LevelEditor(Plugin plugin, ManualLogSource log) { this.plugin = plugin; this.log = log; }
 
     private void Clear()
@@ -104,6 +115,7 @@ internal sealed class LevelEditor
         pendingRemoval = null; removalTarget = null; mapMode = 0; mapPickRequested = false;
         enemies.Clear(); matches.Clear(); forms.Clear();
         pendingForm = null; heroTarget = null; HeroForms.Cancel();
+        pendingMove = null; moveSource = null; EnemyMover.Cancel();
         confirming = refresh = pan = false;
         panX = panY = enemyPage = 0;
         filter = "";
@@ -142,12 +154,15 @@ internal sealed class LevelEditor
             var command = pending;
             var remove = pendingRemoval;
             var form = pendingForm;
+            var move = pendingMove;
+            pendingMove = null;
             pendingForm = null;
             pending = null; // Never retry a submitted or rejected command.
             pendingRemoval = null;
             if (command != null) { Spawn(command); return; }
             if (remove != null) { Remove(remove); return; }
             if (form != null) { TransformHero(form); return; }
+            if (move != null) { Move(move); return; }
             if (mapMode != 0)
             {
                 if (mapPickRequested)
@@ -589,16 +604,19 @@ internal sealed class LevelEditor
     {
         if (snapshot == null || ((mode == 1 || mode == 3) && selectedEnemy == null)) return;
         if (mode == 3 && (!showForms || !plugin.HeroFormsEnabled)) return;
+        if (mode == 4 && (showForms || !EnemyMover.Ready)) { status = EnemyMover.Status; return; }
+        pendingMove = null; moveSource = null; EnemyMover.Cancel();
         mapMode = mode;
         selectedTile = null; removalTarget = null; confirming = false;
         pending = null; pendingRemoval = null; pendingForm = null; heroTarget = null; mapPickRequested = false; refresh = pan = false;
-        status = mode == 1 ? "Middle-click a free tile on the 3D board." : mode == 3 ? "Middle-click the hero whose turn it is." : "Middle-click an enemy or destructible prop.";
+        status = mode == 1 ? "Middle-click a free tile on the 3D board." : mode == 3 ? "Middle-click the hero whose turn it is." : mode == 4 ? "Middle-click a living enemy to move." : "Middle-click an enemy or destructible prop.";
     }
 
     private void EndMapTool()
     {
         mapMode = 0; mapPickRequested = false;
         pending = null; pendingRemoval = null; removalTarget = null; pendingForm = null; heroTarget = null; HeroForms.Cancel();
+        pendingMove = null; moveSource = null; EnemyMover.Cancel();
         selectedTile = null; confirming = false;
         refresh = true; pan = false;
     }
@@ -664,6 +682,27 @@ internal sealed class LevelEditor
                 heroTarget = ValidateHeroTarget(live, reader, tile);
                 selectedTile = tile;
                 status = "Selected " + heroTarget.TypeKey + ". Confirm hero form.";
+            }
+            else if (mapMode == 4)
+            {
+                if (moveSource == null)
+                {
+                    moveSource = ValidateMoveTarget(reader, tile);
+                    status = "Enemy selected. Middle-click its destination.";
+                }
+                else
+                {
+                    var source = ValidateMoveTarget(reader, reader.Read(moveSource.Tile.X, moveSource.Tile.Y));
+                    if (!moveSource.SamePiece(source))
+                    {
+                        moveSource = null;
+                        throw new InvalidOperationException("Enemy changed; select it again.");
+                    }
+                    if (!tile.Available || !reader.CanSpawnPieceOnPosition(reader.Point(tile.X, tile.Y)))
+                        throw new InvalidOperationException("Destination must be a free, walkable tile.");
+                    selectedTile = tile;
+                    status = "Destination selected. Confirm move, or choose another tile.";
+                }
             }
         }
         catch (Exception ex)
@@ -810,6 +849,44 @@ internal sealed class LevelEditor
         return Constructor(requestType, elementType, ModelType("PieceId")).Invoke(new[] { element, Get(target.Piece, "pieceId") });
     }
 
+    private void Move(MoveCommand command)
+    {
+        try
+        {
+            if (mapMode != 4 || showForms || !plugin.VerifiedGame || !plugin.DeveloperModeEnabled)
+                throw new InvalidOperationException("Move tool no longer enabled.");
+            if (!HouseRules.TryGetLevelEditorContext(out var live, out var reason) || !command.Snapshot.SameSession(live))
+                throw new InvalidOperationException("Move rejected: " + reason);
+            if (!HouseRules.TryGetLevelEditorPicker(live, out var handler, out reason))
+                throw new InvalidOperationException(reason);
+            RequireMapIdle(handler);
+            var reader = new BoardReader(live);
+            var source = ValidateMoveTarget(reader, reader.Read(command.Source.Tile.X, command.Source.Tile.Y));
+            if (!command.Source.SamePiece(source)) throw new InvalidOperationException("Enemy moved or changed; select it again.");
+            var destination = reader.Read(command.Destination.X, command.Destination.Y);
+            if (!destination.Available || !reader.CanSpawnPieceOnPosition(reader.Point(destination.X, destination.Y)))
+                throw new InvalidOperationException("Destination no longer free or walkable.");
+            status = EnemyMover.Queue(live, source.Piece, source.Tile.X, source.Tile.Y, destination.X, destination.Y);
+            snapshot = live;
+        }
+        catch (Exception ex)
+        {
+            status = ex.GetBaseException().Message;
+            log.LogWarning("BMF enemy move: " + status);
+        }
+        finally { moveSource = null; selectedTile = null; }
+    }
+
+    private static RemovalTarget ValidateMoveTarget(BoardReader reader, TileCell tile)
+    {
+        if (!tile.Exists || !tile.Occupied) throw new InvalidOperationException("Middle-click a living enemy.");
+        var piece = reader.PieceAt(reader.Point(tile.X, tile.Y));
+        EnemyMover.ValidateEnemy(piece, tile.X, tile.Y);
+        var id = (int)Call(Get(piece, "pieceId"), "get_Id");
+        var key = (string)Call(Get(piece, "typeId"), "get_Id");
+        return new RemovalTarget(piece, id, key, tile);
+    }
+
     private void Remove(RemovalCommand command)
     {
         if (!plugin.VerifiedGame) throw new InvalidOperationException("Removal rejected: unverified build.");
@@ -845,18 +922,20 @@ internal sealed class LevelEditor
     {
         if (mapMode == 0) return false;
         if (mapMode == 3 && !plugin.HeroFormsEnabled) { EndMapTool(); return false; }
+        if (mapMode == 4 && !plugin.DeveloperModeEnabled) { EndMapTool(); return false; }
         try
         {
             float width = Math.Min(610f, Screen.width - 24f);
             float x = (Screen.width - width) * 0.5f, y = 10f;
-            var panel = new Rect(x, y, width, 152f);
-            GUI.Box(panel, mapMode == 1 ? "BMF | Place enemy on game map" : mapMode == 3 ? "BMF | Hero forms (experimental)" : "BMF | Remove piece from game map");
+            var panel = new Rect(x, y, width, mapMode == 4 ? 183f : 152f);
+            GUI.Box(panel, mapMode == 1 ? "BMF | Place enemy on game map" : mapMode == 3 ? "BMF | Hero forms (experimental)" : mapMode == 4 ? "BMF | Move enemy on game map" : "BMF | Remove piece from game map");
             bool formWaiting = mapMode == 3 && HeroForms.Waiting;
-            bool ready = !mapPickRequested && pending == null && pendingRemoval == null && pendingForm == null && !formWaiting;
+            bool moveWaiting = mapMode == 4 && EnemyMover.Waiting;
+            bool ready = !mapPickRequested && pending == null && pendingRemoval == null && pendingForm == null && pendingMove == null && !formWaiting && !moveWaiting;
             GUI.Label(new Rect(x + 12, y + 23, width - 24, 22), mapMode == 1 ?
-                "Enemy: " + (selectedEnemy?.Name ?? "(select enemy first)") : mapMode == 3 ? "Play as: " + selectedEnemy?.Name + " | Native form, card rules may change." : "Enemies and destructible props only. Normal death effects apply.");
+                "Enemy: " + (selectedEnemy?.Name ?? "(select enemy first)") : mapMode == 3 ? "Play as: " + selectedEnemy?.Name + " | Native form, card rules may change." : mapMode == 4 ? (moveSource == null ? "Step 1: Middle-click a living 1x1 enemy." : "Enemy: " + moveSource.TypeKey + " (" + moveSource.Tile.X + "," + moveSource.Tile.Y + ")") : "Enemies and destructible props only. Normal death effects apply.");
             GUI.Label(new Rect(x + 12, y + 45, width - 24, 22), selectedTile == null ?
-                "Middle-click a tile/piece on the 3D game board." : "Selected tile (" + selectedTile.X + "," + selectedTile.Y + ") " + selectedTile.Detail);
+                (mapMode == 4 && moveSource != null ? "Step 2: Middle-click any free destination tile." : "Middle-click a tile/piece on the 3D game board.") : "Selected tile (" + selectedTile.X + "," + selectedTile.Y + ") " + selectedTile.Detail);
             float half = (width - 30) * 0.5f;
             if (GUI.Button(new Rect(x + 12, y + 72, half, 27), "Back to editor / cancel"))
             { EndMapTool(); return true; }
@@ -875,9 +954,19 @@ internal sealed class LevelEditor
                 if (GUI.Button(new Rect(x + 18 + half, y + 72, half, 27), "Confirm hero form"))
                     pendingForm = new SpawnCommand(snapshot, selectedTile, selectedEnemy);
             }
-            else GUI.Label(new Rect(x + 18 + half, y + 72, half, 27), "Select an eligible target");
-            GUI.Label(new Rect(x + 12, y + 102, width - 24, 25), mapMode == 3 && status.StartsWith("Hero form request submitted", StringComparison.Ordinal) ? HeroForms.Status : status);
+            else if (ready && mapMode == 4 && moveSource != null && selectedTile?.Available == true)
+            {
+                if (GUI.Button(new Rect(x + 18 + half, y + 72, half, 27), "Confirm move"))
+                    pendingMove = new MoveCommand(snapshot, moveSource, selectedTile);
+            }
+            else GUI.Label(new Rect(x + 18 + half, y + 72, half, 27), moveWaiting ? "Waiting for game..." : "Select an eligible target");
+            GUI.Label(new Rect(x + 12, y + 102, width - 24, 25), mapMode == 3 && status.StartsWith("Hero form request submitted", StringComparison.Ordinal) ? HeroForms.Status : mapMode == 4 && status.StartsWith("Enemy move submitted", StringComparison.Ordinal) ? EnemyMover.Status : status);
             GUI.Label(new Rect(x + 12, y + 128, width - 24, 20), "Disposable local solo only | F10 cancels and closes");
+            if (mapMode == 4 && ready && moveSource != null &&
+                GUI.Button(new Rect(x + 12, y + 151, width - 24, 25), "Choose different enemy"))
+            {
+                moveSource = null; selectedTile = null; status = "Middle-click a living enemy to move.";
+            }
             var e = Event.current;
             if (ready && e != null && e.type == EventType.MouseDown && e.button == 2 && !panel.Contains(e.mousePosition))
             {
@@ -907,7 +996,7 @@ internal sealed class LevelEditor
             void Label(float top, string value) => GUI.Label(new Rect(x + 15, y + top, inner, 22), value);
             bool Button(float top, float l, float w, string value) => GUI.Button(new Rect(x + l, y + top, w, 24), value);
             Label(91, "Runtime level editor | Disposable local solo only; back up saves.");
-            float actionWidth = inner / 3f;
+            float actionWidth = inner / 4f;
             if (Button(115, 15, actionWidth - 3, "Refresh"))
             { refresh = true; pan = confirming = false; pending = null; }
             if (Button(115, 15 + actionWidth, actionWidth - 3, "Place on map"))
@@ -920,6 +1009,12 @@ internal sealed class LevelEditor
             {
                 if (snapshot != null && !refresh && !pan) { BeginMapTool(2); return; }
                 status = "Refresh the current solo board first.";
+            }
+            if (Button(115, 15 + 3 * actionWidth, actionWidth - 3, "Move on map"))
+            {
+                if (!EnemyMover.Ready) status = EnemyMover.Status;
+                else if (snapshot != null && !refresh && !pan) { BeginMapTool(4); return; }
+                else status = "Refresh the current solo board first.";
             }
             if (snapshot == null)
             {

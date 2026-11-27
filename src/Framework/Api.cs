@@ -114,6 +114,6 @@ public sealed class ModuleContext
 public static class Framework
 {
     public const string Guid = "org.battlemarked.modframework";
-    public const string Version = "0.6.27";
+    public const string Version = "0.6.28";
     public static bool Register(BattlemarkedModule module) => Plugin.Instance?.Enqueue(module) ?? false;
 }

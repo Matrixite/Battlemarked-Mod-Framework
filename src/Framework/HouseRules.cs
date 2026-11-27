@@ -373,6 +373,7 @@ internal sealed class HouseRules : BattlemarkedModule
             }
             catch (Exception ex) { ctx.Log.LogWarning("Optional level editor spawn capture: " + ex.Message); }
             HeroForms.Attach(ctx);
+            EnemyMover.Attach(ctx);
             // Capture the currently ticking desktop board interaction handler.
             // Read-only; no patch changes normal mouse input or game rules.
             try
@@ -1204,6 +1205,7 @@ internal sealed class HouseRules : BattlemarkedModule
     public override void OnUpdate()
     {
         if (Plugin.Instance?.HeroFormsEnabled != true) HeroForms.Cancel();
+        if (Plugin.Instance?.DeveloperModeEnabled != true) EnemyMover.Cancel();
         if (Plugin.Instance?.DeveloperModeEnabled != true) { debugCardRegistries.Clear(); debugSpawnContexts.Clear(); }
         if (Plugin.Instance?.DeveloperModeEnabled != true && Plugin.Instance?.HeroFormsEnabled != true) debugBoardHandler = null;
         ConsumeUnverifiedHealthTransition();
@@ -1231,5 +1233,5 @@ internal sealed class HouseRules : BattlemarkedModule
         }
         catch (Exception ex) { ctx.Log.LogWarning("House rules report: " + ex.Message); }
     }
-    public override void OnStop() { HeroForms.Stop(); debugCardRegistries.Clear(); debugSpawnContexts.Clear(); debugBoardHandler = null; health?.CancelForTransition("Module stopped"); LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); health?.Write(); }
+    public override void OnStop() { EnemyMover.Stop(); HeroForms.Stop(); debugCardRegistries.Clear(); debugSpawnContexts.Clear(); debugBoardHandler = null; health?.CancelForTransition("Module stopped"); LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); health?.Write(); }
 }

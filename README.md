@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.27-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.28-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,12 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.28 — move enemies directly on the map
+
+In **F10 > Level Editor**, refresh the board, then press **Move on map** (no enemy-list selection is needed). Middle-click a living 1×1 enemy on the 3D board, middle-click a free walkable destination, and press **Confirm move**. Choose another destination before confirming, or use **Choose different enemy** to reset the source. After submission the toolbar remains available for another move. Back to editor / cancel or F10 cancels any unconsumed request.
+
+The experimental move action routes a one-use local debug request through the actual native simulation runner's registered movement helper. It uses ForceMovePiece with direct teleport and no destination correction, preserving the existing piece instead of killing and respawning it. The game still controls movement events and tile effects; no AP or path-length limit is imposed by BMF. Occupied/blocked/missing tiles, non-enemies, multi-tile enemies, changed source/level, busy game, unverified builds and multiplayer are rejected. Disposable solo campaigns only. Native bindings were confirmed against the supplied game metadata and GameAssembly, but Windows compilation and live movement acceptance remain unverified.
 
 ## v0.6.27 — Hero Forms independent of Developer mode
 
