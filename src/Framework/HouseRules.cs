@@ -338,10 +338,22 @@ internal sealed class HouseRules : BattlemarkedModule
                 var stateType = gameModel.GetType("Jade.GameModel.GameState", true);
                 var registryType = Assembly.Load(new AssemblyName("GameDefinitions"))
                     .GetType("Jade.GameDefinitions.CardRegistry", true);
-                var constructor = handler.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                    .Single(c => c.GetParameters().Length == 3 &&
-                        c.GetParameters().Any(p => p.ParameterType == stateType) &&
-                        c.GetParameters().Any(p => p.ParameterType == registryType));
+                ConstructorInfo constructor = null;
+                foreach (var candidate in handler.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+                {
+                    var parameters = candidate.GetParameters();
+                    if (parameters.Length != 3) continue;
+                    bool hasState = false, hasRegistry = false;
+                    foreach (var parameter in parameters)
+                    {
+                        hasState |= parameter.ParameterType == stateType;
+                        hasRegistry |= parameter.ParameterType == registryType;
+                    }
+                    if (!hasState || !hasRegistry) continue;
+                    if (constructor != null) throw new InvalidOperationException("Ambiguous card registry constructor.");
+                    constructor = candidate;
+                }
+                if (constructor == null) throw new InvalidOperationException("Card registry constructor unavailable.");
                 ctx.Patches.Patch(constructor, postfix: Hook(nameof(CaptureDebugCardRegistry)));
             }
             catch (Exception ex) { ctx.Log.LogWarning("Optional debug card registry capture: " + ex.Message); }

@@ -1,8 +1,12 @@
-# v0.6.16-alpha validation
+# v0.6.17-alpha validation
 
 ## First stable release automation
 
 The 12 Python release-gate and simulated publication tests pass locally. These cover the current alpha skip, exact stable-version eligibility, inconsistent version rejection, wrong branch refusal, mismatched tag refusal, versioned source archive and matching SHA-256 checksum, and repeated-run protection. The publication tests use a temporary local Git remote and mock GitHub CLI; they do not create a real release. The hosted workflow is configured to run the .NET 8 core tests before publication; dotnet and the Windows game environment are unavailable here. Real GitHub Actions execution and Windows/gameplay acceptance remain unverified. No framework version, gameplay behavior or updater code changes are included in this automation.
+
+## v0.6.17 interop compiler compatibility
+
+User reported v0.6.16 queues but v0.6.14 remains installed after relaunch. The existing worker builds before replacing any DLL; the exact failing step is unknown without the installer transcript. v0.6.16 had two class records, reintroducing the compiler compatibility issue previously reported with the user’s interop set. The new source-level check fails on those two records in v0.6.16 and passes after replacing them with ordinary classes. The two updated reflection binding searches also avoid captured lambdas, preserving exact, unambiguous matching. This is not a Windows compilation or runtime test. Confirm the next queued installation reports success, the menu shows v0.6.17, and Dev Tools opens with the browser pages. If not, collect `BepInEx/BMF-Updates/update-install.log` and `last-update.txt`.
 
 ## v0.6.16 debug workspace
 

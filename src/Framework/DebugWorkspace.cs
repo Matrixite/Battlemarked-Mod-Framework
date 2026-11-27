@@ -26,8 +26,23 @@ internal sealed class DebugWorkspace
     private Entry selected, target, card;
     private bool confirming;
     private Grant pending;
-    private sealed record Entry(UObject Object, string Name, string Detail, string Key);
-    private sealed record Grant(Entry Target, Entry Card, int Scene);
+    // Keep game-reference DTOs as ordinary classes: the user's generated
+    // interop references have previously failed Roslyn record synthesis
+    // with CS0656 (missing NullableAttribute constructors).
+    private sealed class Entry
+    {
+        internal readonly UObject Object;
+        internal readonly string Name, Detail, Key;
+        internal Entry(UObject obj, string name, string detail, string key)
+        { Object = obj; Name = name; Detail = detail; Key = key; }
+    }
+    private sealed class Grant
+    {
+        internal readonly Entry Target, Card;
+        internal readonly int Scene;
+        internal Grant(Entry target, Entry card, int scene)
+        { Target = target; Card = card; Scene = scene; }
+    }
 
     internal DebugWorkspace(Plugin plugin, ManualLogSource log)
     { this.plugin = plugin; this.log = log; }

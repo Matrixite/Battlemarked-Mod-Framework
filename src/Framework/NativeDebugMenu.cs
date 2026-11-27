@@ -28,19 +28,10 @@ internal sealed class NativeDebugMenu
         var type = assembly.GetType("Jade.DebugMenu.DebugMenu", true);
         if (!typeof(Component).IsAssignableFrom(type))
             throw new InvalidOperationException("Unexpected native debug menu type.");
-        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
-        MethodInfo Find(string name, bool returnsValue = false)
-        {
-            var methods = type.GetMethods(flags).Where(m => m.Name == name &&
-                !m.IsAbstract && !m.ContainsGenericParameters && (m.ReturnType != typeof(void)) == returnsValue &&
-                m.GetParameters().Length == 0).ToArray();
-            if (methods.Length != 1) throw new InvalidOperationException("Missing or ambiguous " + name);
-            return methods[0];
-        }
-        var nativeShow = Find("ShowDebugMenu");
-        var nativeHide = Find("HideDebugMenu");
-        var nativeGetFacade = Find("get_FidelityDebugMenu", returnsValue: true);
-        var nativeGetTools = Find("get_DebugTools", returnsValue: true);
+        var nativeShow = Find(type, "ShowDebugMenu");
+        var nativeHide = Find(type, "HideDebugMenu");
+        var nativeGetFacade = Find(type, "get_FidelityDebugMenu", returnsValue: true);
+        var nativeGetTools = Find(type, "get_DebugTools", returnsValue: true);
         var nopType = assembly.GetType("Jade.DebugMenu.NopFidelityDebugMenuFacadeImpl", true);
         var castDefinition = typeof(Il2CppObjectBase).GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Single(m => m.Name == "TryCast" && m.IsGenericMethodDefinition &&
@@ -54,6 +45,20 @@ internal sealed class NativeDebugMenu
         getFacade = nativeGetFacade;
         getTools = nativeGetTools;
         menuType = type;
+    }
+
+    private static MethodInfo Find(Type type, string name, bool returnsValue = false)
+    {
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        MethodInfo match = null;
+        foreach (var method in type.GetMethods(flags))
+        {
+            if (method.Name != name || method.IsAbstract || method.ContainsGenericParameters ||
+                (method.ReturnType != typeof(void)) != returnsValue || method.GetParameters().Length != 0) continue;
+            if (match != null) throw new InvalidOperationException("Missing or ambiguous " + name);
+            match = method;
+        }
+        return match ?? throw new InvalidOperationException("Missing or ambiguous " + name);
     }
 
     private Component FindMenu()

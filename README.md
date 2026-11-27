@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.16-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.17-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,12 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.17 — debug workspace compiler compatibility
+
+If an update queues successfully but the next launch remains on v0.6.14, the download/queue did not necessarily fail: the installer builds from source after shutdown and retains the previous DLLs when compilation fails. v0.6.16 accidentally reintroduced two class records, a known source of CS0656 with the game's generated interop reference set (see v0.2.1). v0.6.17 uses ordinary classes and explicit native-method/constructor matching instead of the new capturing reflection lambdas. Dev Tools behavior and existing update/install safety checks are unchanged. The user’s actual v0.6.16 installer error remains unconfirmed without the Windows transcript.
+
+Check for updates again, queue v0.6.17, quit and wait for Steam to show Play **and** the installer to finish. If the old version persists, inspect `BepInEx/BMF-Updates/last-update.txt` and share `update-install.log` from that folder. Do not disable antivirus or remove the installed framework.
 
 ## v0.6.16 — BMF-owned debug workspace
 
