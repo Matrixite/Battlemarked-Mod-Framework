@@ -372,6 +372,7 @@ internal sealed class HouseRules : BattlemarkedModule
                 ctx.Patches.Patch(constructor, postfix: Hook(nameof(CaptureDebugSpawnContext)));
             }
             catch (Exception ex) { ctx.Log.LogWarning("Optional level editor spawn capture: " + ex.Message); }
+            HeroForms.Attach(ctx);
             // Capture the currently ticking desktop board interaction handler.
             // Read-only; no patch changes normal mouse input or game rules.
             try
@@ -812,6 +813,13 @@ internal sealed class HouseRules : BattlemarkedModule
         catch (Exception ex) { context = null; reason = ex.GetBaseException().Message; return false; }
     }
 
+    internal static bool TryValidateLocalHero(LevelEditor.Context context, object piece, out string reason)
+    {
+        if (!TryGetLevelEditorContext(out var live, out reason) || context == null || !context.SameSession(live)) return false;
+        try { reason = running.Scope(piece); return reason == "local solo hero"; }
+        catch (Exception ex) { reason = ex.GetBaseException().Message; return false; }
+    }
+
     // A debug command must resolve the current authoritative piece, not trust
     // a view object, a cached snapshot, or a session flag alone.
     internal static bool TryGetDebugRoomForPieceId(object pieceId, object cardId, UnityEngine.Object definition, out object room, out string reason)
@@ -1178,7 +1186,7 @@ internal sealed class HouseRules : BattlemarkedModule
     public override void OnSceneChanged(SceneInfo info) => SyncScene(info.Handle, info.Name);
     public override void OnUpdate()
     {
-        if (Plugin.Instance?.DeveloperModeEnabled != true) { debugCardRegistries.Clear(); debugSpawnContexts.Clear(); debugBoardHandler = null; }
+        if (Plugin.Instance?.DeveloperModeEnabled != true) { HeroForms.Cancel(); debugCardRegistries.Clear(); debugSpawnContexts.Clear(); debugBoardHandler = null; }
         ConsumeUnverifiedHealthTransition();
         if (requestedRefundMode != refundMode && (DateTime.UtcNow - lastModeCheck).TotalSeconds >= 1)
             TryApplyModeChange();
@@ -1204,5 +1212,5 @@ internal sealed class HouseRules : BattlemarkedModule
         }
         catch (Exception ex) { ctx.Log.LogWarning("House rules report: " + ex.Message); }
     }
-    public override void OnStop() { debugCardRegistries.Clear(); debugSpawnContexts.Clear(); debugBoardHandler = null; health?.CancelForTransition("Module stopped"); LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); health?.Write(); }
+    public override void OnStop() { HeroForms.Stop(); debugCardRegistries.Clear(); debugSpawnContexts.Clear(); debugBoardHandler = null; health?.CancelForTransition("Module stopped"); LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); health?.Write(); }
 }

@@ -19,6 +19,10 @@ internal sealed class LevelEditor
     private Context snapshot;
     private readonly List<Enemy> enemies = new();
     private readonly List<Enemy> matches = new();
+    private readonly List<Enemy> forms = new();
+    private bool showForms;
+    private SpawnCommand pendingForm;
+    private RemovalTarget heroTarget;
     private TileCell[,] cells = new TileCell[WindowSize, WindowSize];
     private int minX, minY, sizeX, sizeY, startX, startY, enemyPage;
     private int panX, panY;
@@ -29,7 +33,7 @@ internal sealed class LevelEditor
     private SpawnCommand pending;
     private RemovalCommand pendingRemoval;
     private RemovalTarget removalTarget;
-    // 0 = full editor, 1 = enemy placement, 2 = piece removal.
+    // 0 = full editor, 1 = enemy placement, 2 = piece removal, 3 = hero form.
     private int mapMode;
     private bool mapPickRequested;
     private float mapClickX, mapClickY;
@@ -98,7 +102,8 @@ internal sealed class LevelEditor
         cells = new TileCell[WindowSize, WindowSize];
         selectedTile = null; selectedEnemy = null; pending = null;
         pendingRemoval = null; removalTarget = null; mapMode = 0; mapPickRequested = false;
-        enemies.Clear(); matches.Clear();
+        enemies.Clear(); matches.Clear(); forms.Clear(); showForms = false;
+        pendingForm = null; heroTarget = null; HeroForms.Cancel();
         confirming = refresh = pan = false;
         panX = panY = enemyPage = 0;
         filter = "";
@@ -126,10 +131,13 @@ internal sealed class LevelEditor
             }
             var command = pending;
             var remove = pendingRemoval;
+            var form = pendingForm;
+            pendingForm = null;
             pending = null; // Never retry a submitted or rejected command.
             pendingRemoval = null;
             if (command != null) { Spawn(command); return; }
             if (remove != null) { Remove(remove); return; }
+            if (form != null) { TransformHero(form); return; }
             if (mapMode != 0)
             {
                 if (mapPickRequested)
@@ -262,7 +270,7 @@ internal sealed class LevelEditor
         if (full)
         {
             selectedEnemy = null;
-            enemies.Clear(); matches.Clear(); enemyPage = 0;
+            enemies.Clear(); matches.Clear(); forms.Clear(); enemyPage = 0;
             try
             {
                 if (live.Registry == null) throw new InvalidOperationException("Current HUD piece registry unavailable.");
@@ -271,7 +279,7 @@ internal sealed class LevelEditor
             }
             catch (Exception ex)
             {
-                enemies.Clear(); matches.Clear();
+                enemies.Clear(); matches.Clear(); forms.Clear();
                 status = "Tiles ready; " + ex.GetBaseException().Message;
                 log.LogWarning("BMF level editor enemy registry: " + ex.GetBaseException());
             }
@@ -361,7 +369,33 @@ internal sealed class LevelEditor
         return team != null && team.ToString() == "EnemyOfPlayers";
     }
 
-    private static MethodInfo FindCast(Type type)
+    private static bool ValidateFormDefinition(Context context, UObject config, UObject definition, out object id, out string key)
+    {
+        id = null; key = null;
+        if (context.Registry == null || config == null || definition == null) return false;
+        var defType = Load("GameDefinitions", "Jade.GameDefinitions.PieceDefinition");
+        var idType = ModelType("PieceTypeId");
+        var pointType = ModelType("IntPoint2D");
+        if (!defType.IsInstanceOfType(definition)) return false;
+        id = Call(definition, "get_PieceTypeId");
+        if (!idType.IsInstanceOfType(id) || Call(id, "get_Id") is not string name || string.IsNullOrWhiteSpace(name) ||
+            Call(id, "get_Guid") is not string guid || string.IsNullOrWhiteSpace(guid)) return false;
+        key = name + " | " + guid;
+        if (Call(definition, "get_Hp") is not int hp || hp <= 0) return false;
+        var size = Call(definition, "get_PieceSize");
+        if (size == null || !size.GetType().IsEnum || size.GetType().FullName != "Jade.SharedEnums.PieceSize") return false;
+        var footprint = Require(ModelType("PieceSizeHelper"), "PieceSizeToTileSize", true, pointType,
+            size.GetType(), typeof(float)).Invoke(null, new[] { size, (object)0f });
+        if ((int)Get(footprint, "x") != 1 || (int)Get(footprint, "y") != 1) return false;
+        if (Require(context.Registry.GetType(), "GetPieceDefinition", false, defType, idType)
+            .Invoke(context.Registry, new[] { id }) is not UObject registered || registered == null || registered != definition) return false;
+        var qualitiesType = Load("GameDefinitions", "Jade.GameDefinitions.PieceQualities");
+        var qualities = Constructor(qualitiesType, defType, ConfigType()).Invoke(new object[] { definition, config });
+        return Call(qualities, "get_IsNonNpcCreature") is bool creature && creature &&
+            Call(qualities, "get_UsesHealth") is bool health && health;
+    }
+
+    internal static MethodInfo FindCast(Type type)
     {
         MethodInfo cast = null;
         foreach (var method in typeof(Il2CppObjectBase).GetMethods(BindingFlags.Public | BindingFlags.Instance))
@@ -381,6 +415,7 @@ internal sealed class LevelEditor
         if (!typeof(UObject).IsAssignableFrom(type)) throw new InvalidOperationException("Invalid definition type.");
         var cast = FindCast(type);
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        var seenForms = new HashSet<string>(StringComparer.Ordinal);
         var objects = Resources.FindObjectsOfTypeAll(Il2CppType.From(type));
         int inspected = 0, skipped = 0;
         if (objects != null)
@@ -393,6 +428,8 @@ internal sealed class LevelEditor
                     var def = cast.Invoke(obj, null) as UObject;
                     if (ValidateEnemy(context, config, def, out _, out _, out string key) && seen.Add(key))
                         enemies.Add(new Enemy(def, def.name ?? key, key));
+                    if (ValidateFormDefinition(context, config, def, out _, out string formKey) && seenForms.Add(formKey))
+                        forms.Add(new Enemy(def, def.name ?? formKey, formKey));
                 }
                 catch (Exception ex)
                 {
@@ -400,6 +437,7 @@ internal sealed class LevelEditor
                 }
             }
         enemies.Sort(CompareEnemies);
+        forms.Sort(CompareEnemies);
         ApplyFilter();
         status = enemies.Count + " eligible enemies / " + Math.Min(inspected, ScanLimit) + " scanned" +
             (inspected > ScanLimit ? " (capped)" : "") + (skipped > 0 ? " | " + skipped + " unreadable" : "") + ".";
@@ -409,7 +447,7 @@ internal sealed class LevelEditor
     private void ApplyFilter()
     {
         matches.Clear();
-        foreach (var enemy in enemies)
+        foreach (var enemy in (showForms ? forms : enemies))
             if (enemy.Name.Contains(filter, StringComparison.OrdinalIgnoreCase) || enemy.Key.Contains(filter, StringComparison.OrdinalIgnoreCase))
                 matches.Add(enemy);
         enemyPage = 0;
@@ -465,7 +503,7 @@ internal sealed class LevelEditor
     // Generated interop classes can implement a native IL2CPP interface
     // without implementing the corresponding CLR wrapper type. Validate with
     // the same native checked cast used for current room and asset proof.
-    private static object CheckedRequest(object message, Type messageType, Type requestType)
+    internal static object CheckedRequest(object message, Type messageType, Type requestType)
     {
         if (!messageType.IsInstanceOfType(message) || message is not Il2CppObjectBase native || native.Pointer == IntPtr.Zero)
             throw new InvalidOperationException("Native request construction failed: " + messageType.Name);
@@ -537,17 +575,17 @@ internal sealed class LevelEditor
 
     private void BeginMapTool(int mode)
     {
-        if (snapshot == null || (mode == 1 && selectedEnemy == null)) return;
+        if (snapshot == null || ((mode == 1 || mode == 3) && selectedEnemy == null)) return;
         mapMode = mode;
         selectedTile = null; removalTarget = null; confirming = false;
-        pending = null; pendingRemoval = null; mapPickRequested = false; refresh = pan = false;
-        status = mode == 1 ? "Middle-click a free tile on the 3D board." : "Middle-click an enemy or destructible prop.";
+        pending = null; pendingRemoval = null; pendingForm = null; heroTarget = null; mapPickRequested = false; refresh = pan = false;
+        status = mode == 1 ? "Middle-click a free tile on the 3D board." : mode == 3 ? "Middle-click the hero whose turn it is." : "Middle-click an enemy or destructible prop.";
     }
 
     private void EndMapTool()
     {
         mapMode = 0; mapPickRequested = false;
-        pending = null; pendingRemoval = null; removalTarget = null;
+        pending = null; pendingRemoval = null; removalTarget = null; pendingForm = null; heroTarget = null; HeroForms.Cancel();
         selectedTile = null; confirming = false;
         refresh = true; pan = false;
     }
@@ -558,7 +596,7 @@ internal sealed class LevelEditor
     private void PickMapTile()
     {
         selectedTile = null;
-        removalTarget = null;
+        removalTarget = null; heroTarget = null;
         try
         {
             if (!HouseRules.TryGetLevelEditorContext(out var live, out var reason))
@@ -602,13 +640,53 @@ internal sealed class LevelEditor
                 selectedTile = tile;
                 status = "Selected " + removalTarget.TypeKey + ". Confirm removal.";
             }
+            else if (mapMode == 3)
+            {
+                heroTarget = ValidateHeroTarget(live, reader, tile);
+                selectedTile = tile;
+                status = "Selected " + heroTarget.TypeKey + ". Confirm hero form.";
+            }
         }
         catch (Exception ex)
         {
-            selectedTile = null; removalTarget = null;
+            selectedTile = null; removalTarget = null; heroTarget = null;
             status = ex.GetBaseException().Message;
             log.LogInfo("BMF level editor map pick: " + status);
         }
+    }
+
+    private static RemovalTarget ValidateHeroTarget(Context live, BoardReader reader, TileCell tile)
+    {
+        if (!tile.Exists || !tile.Occupied) throw new InvalidOperationException("Select an occupied hero tile.");
+        var piece = reader.PieceAt(reader.Point(tile.X, tile.Y));
+        HeroForms.ValidatePiece(live.State, live.Board, piece);
+        if (!HouseRules.TryValidateLocalHero(live, piece, out var reason)) throw new InvalidOperationException(reason);
+        var id = (int)Call(Get(piece, "pieceId"), "get_Id");
+        var key = (string)Call(Get(piece, "typeId"), "get_Id");
+        return new RemovalTarget(piece, id, key, tile);
+    }
+
+    private void TransformHero(SpawnCommand command)
+    {
+        try
+        {
+            if (heroTarget == null || !HouseRules.TryGetLevelEditorContext(out var live, out _) || !command.Snapshot.SameSession(live))
+                throw new InvalidOperationException("Hero form target or session changed.");
+            var reader = new BoardReader(live);
+            var hero = ValidateHeroTarget(live, reader, reader.Read(command.Tile.X, command.Tile.Y));
+            if (!heroTarget.SamePiece(hero)) throw new InvalidOperationException("Hero moved or changed; select again.");
+            if (!HouseRules.TryGetLevelEditorPicker(live, out var handler, out var reason)) throw new InvalidOperationException(reason);
+            RequireMapIdle(handler);
+            if (!ValidateFormDefinition(live, ResolveConfig(live), command.Enemy.Definition, out var id, out var key) || key != command.Enemy.Key)
+                throw new InvalidOperationException("Creature definition no longer registered.");
+            status = HeroForms.Queue(live, hero.Piece, command.Enemy.Definition, id);
+        }
+        catch (Exception ex)
+        {
+            status = ex.GetBaseException().Message;
+            log.LogWarning("BMF hero forms: " + status);
+        }
+        finally { heroTarget = null; selectedTile = null; }
     }
 
     // Removal means the native damage/destruction process for an eligible
@@ -751,10 +829,11 @@ internal sealed class LevelEditor
             float width = Math.Min(610f, Screen.width - 24f);
             float x = (Screen.width - width) * 0.5f, y = 10f;
             var panel = new Rect(x, y, width, 152f);
-            GUI.Box(panel, mapMode == 1 ? "BMF | Place enemy on game map" : "BMF | Remove piece from game map");
-            bool ready = !mapPickRequested && pending == null && pendingRemoval == null;
+            GUI.Box(panel, mapMode == 1 ? "BMF | Place enemy on game map" : mapMode == 3 ? "BMF | Hero forms (experimental)" : "BMF | Remove piece from game map");
+            bool formWaiting = mapMode == 3 && HeroForms.Waiting;
+            bool ready = !mapPickRequested && pending == null && pendingRemoval == null && pendingForm == null && !formWaiting;
             GUI.Label(new Rect(x + 12, y + 23, width - 24, 22), mapMode == 1 ?
-                "Enemy: " + (selectedEnemy?.Name ?? "(select enemy first)") : "Enemies and destructible props only. Normal death effects apply.");
+                "Enemy: " + (selectedEnemy?.Name ?? "(select enemy first)") : mapMode == 3 ? "Play as: " + selectedEnemy?.Name + " | Native form, card rules may change." : "Enemies and destructible props only. Normal death effects apply.");
             GUI.Label(new Rect(x + 12, y + 45, width - 24, 22), selectedTile == null ?
                 "Middle-click a tile/piece on the 3D game board." : "Selected tile (" + selectedTile.X + "," + selectedTile.Y + ") " + selectedTile.Detail);
             float half = (width - 30) * 0.5f;
@@ -770,14 +849,19 @@ internal sealed class LevelEditor
                 if (GUI.Button(new Rect(x + 18 + half, y + 72, half, 27), "Confirm removal (damage)"))
                     pendingRemoval = new RemovalCommand(snapshot, removalTarget);
             }
+            else if (ready && mapMode == 3 && heroTarget != null && selectedEnemy != null)
+            {
+                if (GUI.Button(new Rect(x + 18 + half, y + 72, half, 27), "Confirm hero form"))
+                    pendingForm = new SpawnCommand(snapshot, selectedTile, selectedEnemy);
+            }
             else GUI.Label(new Rect(x + 18 + half, y + 72, half, 27), "Select an eligible target");
-            GUI.Label(new Rect(x + 12, y + 102, width - 24, 25), status);
+            GUI.Label(new Rect(x + 12, y + 102, width - 24, 25), mapMode == 3 && status.StartsWith("Hero form request submitted", StringComparison.Ordinal) ? HeroForms.Status : status);
             GUI.Label(new Rect(x + 12, y + 128, width - 24, 20), "Disposable local solo only | F10 cancels and closes");
             var e = Event.current;
             if (ready && e != null && e.type == EventType.MouseDown && e.button == 2 && !panel.Contains(e.mousePosition))
             {
                 mapClickX = e.mousePosition.x; mapClickY = e.mousePosition.y;
-                mapPickRequested = true; selectedTile = null; removalTarget = null;
+                mapPickRequested = true; selectedTile = null; removalTarget = null; heroTarget = null;
                 status = "Resolving live board tile...";
                 e.Use();
             }
@@ -801,19 +885,25 @@ internal sealed class LevelEditor
             void Label(float top, string value) => GUI.Label(new Rect(x + 15, y + top, inner, 22), value);
             bool Button(float top, float l, float w, string value) => GUI.Button(new Rect(x + l, y + top, w, 24), value);
             Label(91, "Runtime level editor | Disposable local solo only; back up saves.");
-            float actionWidth = inner / 3f;
-            if (Button(115, 15, actionWidth - 3, width < 600f ? "Refresh" : "Refresh board & enemies"))
+            float actionWidth = inner / 4f;
+            if (Button(115, 15, actionWidth - 3, "Refresh"))
             { refresh = true; pan = confirming = false; pending = null; }
-            if (Button(115, 15 + actionWidth, actionWidth - 3, "Place on map"))
+            if (Button(115, 15 + actionWidth, actionWidth - 3, showForms ? "Transform hero" : "Place on map"))
             {
                 if (snapshot != null && selectedEnemy != null && !refresh && !pan)
-                { BeginMapTool(1); return; }
+                { BeginMapTool(showForms ? 3 : 1); return; }
                 status = "Refresh and select an enemy first.";
             }
             if (Button(115, 15 + 2 * actionWidth, actionWidth - 3, "Remove on map"))
             {
                 if (snapshot != null && !refresh && !pan) { BeginMapTool(2); return; }
                 status = "Refresh the current solo board first.";
+            }
+            if (Button(115, 15 + 3 * actionWidth, actionWidth - 3, showForms ? "Enemy list" : "Hero forms"))
+            {
+                showForms = !showForms; selectedEnemy = null; confirming = false; pending = null;
+                ApplyFilter();
+                status = showForms ? "Select a creature form, then Transform hero during your hero's turn." : "Select an enemy to place.";
             }
             if (snapshot == null)
             {
@@ -852,8 +942,8 @@ internal sealed class LevelEditor
             if (GUI.Button(new Rect(rx + right - 34, y + footer - 25, 34, 24), ">")) enemyPage = Math.Min(pages - 1, enemyPage + 1);
             Label(footer - 2, selectedTile == null ? "Board " + sizeX + "x" + sizeY + " | origin (" + startX + "," + startY + ") | . free # blocked P piece" :
                 "(" + selectedTile.X + "," + selectedTile.Y + ") " + selectedTile.Detail);
-            Label(footer + 20, "Enemy: " + (selectedEnemy?.Name ?? "select registered 1x1 enemy from list"));
-            if (selectedTile?.Available == true && selectedEnemy != null && !refresh && !pan && pending == null)
+            Label(footer + 20, (showForms ? "Hero form: " : "Enemy: ") + (selectedEnemy?.Name ?? "select registered 1x1 creature from list"));
+            if (!showForms && selectedTile?.Available == true && selectedEnemy != null && !refresh && !pan && pending == null)
             {
                 if (Button(footer + 42, 15, inner, confirming ? "Confirm enemy spawn (local solo)" : "Place selected enemy"))
                 {
@@ -861,7 +951,7 @@ internal sealed class LevelEditor
                     else confirming = true;
                 }
             }
-            else Label(footer + 42, "Select a free tile and eligible enemy.");
+            else Label(footer + 42, showForms ? "Select a form, press Transform hero, then middle-click your current hero." : "Select a free tile and eligible enemy.");
             Label(height - 27, status);
         }
         catch (Exception ex)

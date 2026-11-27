@@ -1,0 +1,276 @@
+using System.Reflection;
+using HarmonyLib;
+using Il2CppInterop.Runtime.InteropTypes;
+using UObject = UnityEngine.Object;
+
+namespace Battlemarked.ModFramework;
+
+// Only a confirmed local request can invoke the simulation's native reversible
+// transformation. Never start a simulation coroutine from the presentation UI.
+internal static class HeroForms
+{
+    private static ModuleContext ctx;
+    private static int mainThread;
+    private static MethodInfo transform;
+    private static Type commandType, requestType, helperType;
+    private static readonly Dictionary<IntPtr, Il2CppObjectBase> handlers = new();
+    private static readonly Dictionary<IntPtr, Il2CppObjectBase> helpers = new();
+    private static Command pending;
+    internal static string Status { get; private set; } = "Hero forms require a new disposable solo campaign.";
+    private sealed class Command
+    {
+        internal LevelEditor.Context Context;
+        internal string Token, Session, Sheet, Source, Destination;
+        internal ulong Owner;
+        internal int Id;
+        internal UObject Definition;
+        internal DateTime Expires;
+    }
+
+    private static Type Load(string assembly, string name) => Assembly.Load(new AssemblyName(assembly)).GetType(name, true);
+    private static Type Model(string name) => Load("Jade.GameModel", "Jade.GameModel." + name);
+    private static Type Logic(string name) => Load("GameLogic", "Jade.GameLogic." + name);
+    private static object Get(object obj, string name) => DebugWorkspace.ReadMember(obj, name);
+    private static object Call(object obj, string name) => DebugWorkspace.Call(obj, name);
+    private static bool Active => ctx != null && Plugin.Instance?.VerifiedGame == true &&
+        Plugin.Instance?.DeveloperModeEnabled == true && Environment.CurrentManagedThreadId == mainThread;
+    private static HarmonyMethod Hook(string name) => new HarmonyMethod(typeof(HeroForms).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static));
+    private static MethodInfo Exact(Type type, string name, bool isStatic, Type result, params Type[] args)
+    {
+        var method = type.GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic |
+            (isStatic ? BindingFlags.Static : BindingFlags.Instance), null, args, null);
+        if (method == null || method.IsAbstract || method.ContainsGenericParameters || method.ReturnType != result)
+            throw new InvalidOperationException("Hero forms binding missing: " + type.Name + "." + name);
+        return method;
+    }
+    private static Il2CppObjectBase Cast(Il2CppObjectBase obj, Type type)
+    {
+        if (obj == null || obj.Pointer == IntPtr.Zero) return null;
+        if (type.IsInstanceOfType(obj)) return obj;
+        var cast = LevelEditor.FindCast(type).Invoke(obj, null) as Il2CppObjectBase;
+        return cast != null && cast.Pointer == obj.Pointer && type.IsInstanceOfType(cast) ? cast : null;
+    }
+
+    internal static void Attach(ModuleContext context)
+    {
+        Stop();
+        try
+        {
+            mainThread = Environment.CurrentManagedThreadId;
+            var state = Model("GameState");
+            var handler = Logic("RequestHandlerDebugCommand");
+            helperType = Logic("SwapPieceHelper");
+            commandType = Load("Jade.Messaging", "Jade.Messaging.RequestDebugCommand");
+            requestType = Load("Jade.Messaging", "Jade.Messaging.IRequest");
+            var factory = Exact(Logic("RequestHandlerDebugCommandFactory"), "Create", true, handler,
+                Logic("IDebugCommands"), state, Logic("PieceAIRunner"), Logic("PieceDespawner"),
+                Logic("CharacterSheets.ICharacterSheetUpdater"), Load("GameDefinitions", "Jade.GameDefinitions.PieceAnimationConfig"),
+                Logic("ITelegraphedTilesHelper"), Load("GameTags", "Jade.GameTags.AffectedPiecesConfig"),
+                Load("GameDefinitions", "Jade.GameDefinitions.PieceRegistry"), Logic("IPieceSpawner"),
+                Logic("ParallelBufferingViewEventPlayer"));
+            var processor = Logic("SpawnHeroPieceForPlayers");
+            var process = processor.GetMethod("Process", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                null, Type.EmptyTypes, null);
+            if (process == null || process.IsAbstract || process.ContainsGenericParameters || process.ReturnType.Name != "Result")
+                throw new InvalidOperationException("Native hero spawn processor unavailable.");
+            var sheet = Model("Piece").GetProperty("characterSheetId")?.PropertyType;
+            if (sheet == null) throw new InvalidOperationException("Hero sheet type unavailable.");
+            string[] names = { "pieceToBeReplaced", "newPieceTypeId", "playerId", "team", "isPlayerControllable", "characterSheetId",
+                "isTransformationReversible", "showDespawnAnimation", "transformedPieceAction" };
+            var types = new[] { Model("Piece"), Model("PieceTypeId"), Model("PlayerId"), Model("Team"), typeof(bool), sheet, typeof(bool), typeof(bool) };
+            foreach (var method in helperType.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (method.Name != "TransformIntoNewPiece" || method.ReturnType != typeof(Il2CppSystem.Collections.IEnumerator)) continue;
+                var p = method.GetParameters();
+                if (p.Length != names.Length || p[8].ParameterType.IsValueType) continue;
+                bool exact = true;
+                for (int i = 0; i < p.Length; i++)
+                    exact &= p[i].Name == names[i] && (i == 8 || p[i].ParameterType == types[i]);
+                if (!exact) continue;
+                if (transform != null) throw new InvalidOperationException("Ambiguous native transformation.");
+                transform = method;
+            }
+            if (transform == null) throw new InvalidOperationException("Native transformation signature unavailable.");
+            var handle = Exact(handler, "HandleRequest", false, typeof(Il2CppSystem.Collections.IEnumerator), requestType);
+            context.Patches.Patch(factory, postfix: Hook(nameof(CaptureHandler)));
+            context.Patches.Patch(process, prefix: Hook(nameof(CaptureSwap)));
+            context.Patches.Patch(handle, prefix: Hook(nameof(HandleCommand)));
+            ctx = context;
+            Status = "Hero forms ready for a new disposable solo campaign.";
+            context.Log.LogInfo("BMF hero forms: native request and transformation capture hooks attached.");
+        }
+        catch (Exception ex)
+        {
+            Stop();
+            Status = "Hero forms unavailable: " + ex.GetBaseException().Message;
+            context.Log.LogWarning("BMF " + Status);
+        }
+    }
+    internal static void Cancel() { pending = null; }
+    internal static void Stop()
+    {
+        Cancel(); handlers.Clear(); helpers.Clear(); transform = null; ctx = null;
+    }
+    private static void CaptureHandler(object __1, object __result)
+    {
+        if (!Active) return;
+        try
+        {
+            if (__1 is not Il2CppObjectBase state || state.Pointer == IntPtr.Zero ||
+                __result is not Il2CppObjectBase handler || handler.Pointer == IntPtr.Zero) return;
+            if (handlers.Count >= 8 && !handlers.ContainsKey(handler.Pointer)) handlers.Clear();
+            handlers[handler.Pointer] = state;
+            ctx.Log.LogInfo("BMF hero forms: native debug request handler captured.");
+        }
+        catch (Exception ex) { ctx.Log.LogWarning("BMF hero forms handler capture: " + ex.GetBaseException().Message); }
+    }
+    private static void CaptureSwap(object __instance)
+    {
+        if (!Active) return;
+        try
+        {
+            var state = Get(__instance, "gameState") as Il2CppObjectBase;
+            var helper = Cast(Get(__instance, "swapPieceHelper") as Il2CppObjectBase, helperType);
+            if (state == null || state.Pointer == IntPtr.Zero || helper == null ||
+                Get(helper, "gameState") is not Il2CppObjectBase linked || linked.Pointer != state.Pointer) return;
+            if (helpers.Count >= 8 && !helpers.ContainsKey(state.Pointer)) helpers.Clear();
+            if (!helpers.ContainsKey(state.Pointer)) ctx.Log.LogInfo("BMF hero forms: native hero transformation helper captured.");
+            helpers[state.Pointer] = helper;
+        }
+        catch (Exception ex) { ctx.Log.LogWarning("BMF hero forms helper capture: " + ex.GetBaseException().Message); }
+    }
+    private static string Session(object state) => Get(state, "sessionId") as string;
+    private static string Sheet(object piece) => Call(Get(piece, "characterSheetId"), "get_Id") as string;
+    private static ulong Owner(object piece) => (ulong)Call(Get(piece, "ownerId"), "get_Id");
+    private static string Key(object id) => (string)Call(id, "get_Id") + " | " + (string)Call(id, "get_Guid");
+    private static bool MatchState(object state, Command command) =>
+        !string.IsNullOrWhiteSpace(command.Session) && Session(state) == command.Session &&
+        Call(Get(state, "hostPlayerId"), "get_Id") is ulong host && host == command.Owner;
+
+    // Current-turn, healthy, ordinary 1x1 local hero only. No nested transforms
+    // until native revert behavior has been accepted in-game.
+    internal static void ValidatePiece(object state, object board, object piece)
+    {
+        if (piece is not Il2CppObjectBase native || native.Pointer == IntPtr.Zero ||
+            !Model("Piece").IsInstanceOfType(piece) ||
+            Get(piece, "isPlayerControlled") is not bool controlled || !controlled ||
+            Get(piece, "isCreatureNonNpc") is not bool creature || !creature ||
+            Get(piece, "isTransformedPiece") is not bool transformed || transformed ||
+            Get(piece, "isPOI") is not bool poi || poi ||
+            Get(piece, "team")?.ToString() != "Players" ||
+            string.IsNullOrWhiteSpace(Sheet(piece)) ||
+            Call(Get(state, "hostPlayerId"), "get_Id") is not ulong host || host != Owner(piece))
+            throw new InvalidOperationException("Select a normal locally owned hero (not a transformed piece).");
+        var type = Model("Piece");
+        if (Exact(Model("PieceHelpers"), "IsDead", true, typeof(bool), type).Invoke(null, new[] { piece }) is not bool dead || dead)
+            throw new InvalidOperationException("Hero has no living piece.");
+        var stats = Get(piece, "stats");
+        var statType = Model("Stats+Type");
+        var hpArgs = new object[] { Enum.Parse(statType, "Health"), 0, 0 };
+        if (Exact(stats.GetType(), "TryGetStat", false, typeof(bool), statType, typeof(int).MakeByRefType(), typeof(int))
+            .Invoke(stats, hpArgs) is not bool hpFound || !hpFound || hpArgs[1] is not int hp || hp <= 0)
+            throw new InvalidOperationException("Only a living hero with positive health can transform.");
+        var size = Exact(Model("PieceSizeHelper"), "GetPieceTileSize", true, Model("IntPoint2D"), type).Invoke(null, new[] { piece });
+        if ((int)Get(size, "x") != 1 || (int)Get(size, "y") != 1)
+            throw new InvalidOperationException("Only 1x1 heroes supported.");
+        if (Exact(Model("BoardHelpers"), "IsCurrentPiece", true, typeof(bool), Model("Board"), Model("PieceId"))
+            .Invoke(null, new[] { board, Get(piece, "pieceId") }) is not bool current || !current)
+            throw new InvalidOperationException("Wait until this hero's turn.");
+    }
+
+    internal static bool Waiting
+    {
+        get
+        {
+            if (pending != null && DateTime.UtcNow > pending.Expires)
+            {
+                Cancel(); Status = "Native transformation request not observed (timed out).";
+                ctx?.Log.LogWarning("BMF hero forms: " + Status);
+            }
+            return pending != null;
+        }
+    }
+
+    internal static string Queue(LevelEditor.Context context, object piece, UObject definition, object id)
+    {
+        if (!Active || transform == null) throw new InvalidOperationException(Status);
+        if (Waiting) throw new InvalidOperationException("A hero form request is already pending.");
+        if (!HouseRules.TryGetLevelEditorContext(out var live, out var reason) || !context.SameSession(live) ||
+            !HouseRules.TryValidateLocalHero(live, piece, out reason))
+            throw new InvalidOperationException("Hero form rejected: " + reason);
+        ValidatePiece(live.State, live.Board, piece);
+        if (Call(live.Room, "get_HasRequestsInQueue") is not bool busy || busy)
+            throw new InvalidOperationException("Local request queue busy.");
+        var command = new Command { Context = live, Token = "bmf-hero-form-" + Guid.NewGuid().ToString("N"),
+            Session = Session(live.State), Sheet = Sheet(piece), Owner = Owner(piece),
+            Id = (int)Call(Get(piece, "pieceId"), "get_Id"), Source = Key(Get(piece, "typeId")), Destination = Key(id),
+            Definition = definition, Expires = DateTime.UtcNow.AddSeconds(15) };
+        if (command.Source == command.Destination) throw new InvalidOperationException("Hero already has this form.");
+        int matches = 0;
+        foreach (var state in handlers.Values)
+            if (helpers.ContainsKey(state.Pointer) && MatchState(state, command)) matches++;
+        if (matches != 1) throw new InvalidOperationException("No unique native transformation session. Enable Dev mode before a new campaign.");
+        var message = commandType.GetConstructor(new[] { typeof(string) })?.Invoke(new object[] { command.Token });
+        var request = LevelEditor.CheckedRequest(message, commandType, requestType);
+        var send = Exact(Load("Jade.Networking", "Jade.Networking.LocalNetworkRoom"), "Send", false, typeof(void), requestType);
+        if (!HouseRules.TryGetLevelEditorContext(out var final, out reason) || !live.SameSession(final))
+            throw new InvalidOperationException("Session changed before hero form dispatch.");
+        pending = command;
+        Status = "Hero form request submitted; waiting for native handler.";
+        try { send.Invoke(live.Room, new[] { request }); }
+        catch { Cancel(); throw; }
+        ctx.Log.LogInfo("BMF hero forms: request submitted for " + definition.name);
+        return Status;
+    }
+
+    private static bool HandleCommand(object __instance, object __0, ref Il2CppSystem.Collections.IEnumerator __result)
+    {
+        // The native dispatcher returns null for an unknown command. Our
+        // unique token is never registered and cannot mutate if a hook fails.
+        var command = pending;
+        if (command == null || !Active) return true;
+        try
+        {
+            var msg = Cast(__0 as Il2CppObjectBase, commandType);
+            if (msg == null || Call(msg, "get_Command") is not string token || token != command.Token) return true;
+            pending = null; // Consume once, before validation or invoking native logic.
+            if (DateTime.UtcNow > command.Expires ||
+                !HouseRules.TryGetLevelEditorContext(out var live, out _) || !command.Context.SameSession(live) ||
+                __instance is not Il2CppObjectBase handler || !handlers.TryGetValue(handler.Pointer, out var state) ||
+                !MatchState(state, command) || !helpers.TryGetValue(state.Pointer, out var helper))
+                throw new InvalidOperationException("Native request no longer matches the confirmed session.");
+            var board = Get(state, "board");
+            if (Call(board, "get_IsLoaded") is not bool loaded || !loaded)
+                throw new InvalidOperationException("Native board not loaded.");
+            var pieceId = Model("PieceId").GetConstructor(new[] { typeof(int) })?.Invoke(new object[] { command.Id });
+            var piece = Exact(Model("BoardHelpers"), "GetPiece", true, Model("Piece"), Model("Board"), Model("PieceId"))
+                .Invoke(null, new[] { board, pieceId });
+            ValidatePiece(state, board, piece);
+            if (Sheet(piece) != command.Sheet || Owner(piece) != command.Owner || Key(Get(piece, "typeId")) != command.Source ||
+                !HouseRules.TryValidateLocalHero(live, piece, out _))
+                throw new InvalidOperationException("Native hero identity changed.");
+            var registry = Get(helper, "pieceRegistry");
+            var id = Call(command.Definition, "get_PieceTypeId");
+            var registered = Exact(registry.GetType(), "GetPieceDefinition", false,
+                Load("GameDefinitions", "Jade.GameDefinitions.PieceDefinition"), Model("PieceTypeId"))
+                .Invoke(registry, new[] { id }) as UObject;
+            if (registered == null || registered != command.Definition || Key(id) != command.Destination)
+                throw new InvalidOperationException("Native form definition changed.");
+            // Keep owner, Players team and real sheet. Native transformation
+            // manages despawn, turn queue, form record, card/trait rules and events.
+            __result = transform.Invoke(helper, new[] { piece, id, Get(piece, "ownerId"), Get(piece, "team"),
+                (object)true, Get(piece, "characterSheetId"), true, true, null }) as Il2CppSystem.Collections.IEnumerator;
+            if (__result == null) throw new InvalidOperationException("Native transform coroutine unavailable.");
+            Status = "Native transform accepted. Check movement, cards and turn order.";
+            ctx.Log.LogInfo("BMF hero forms: native transformation coroutine returned for " + command.Definition.name);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            pending = null;
+            Status = "Hero form rejected: " + ex.GetBaseException().Message;
+            ctx?.Log.LogWarning("BMF " + Status);
+            return true;
+        }
+    }
+}

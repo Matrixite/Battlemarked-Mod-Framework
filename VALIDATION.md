@@ -1,8 +1,14 @@
-# v0.6.23-alpha validation
+# v0.6.24-alpha validation
 
 ## First stable release automation
 
 The 12 Python release-gate and simulated publication tests pass locally. These cover the current alpha skip, exact stable-version eligibility, inconsistent version rejection, wrong branch refusal, mismatched tag refusal, versioned source archive and matching SHA-256 checksum, and repeated-run protection. The publication tests use a temporary local Git remote and mock GitHub CLI; they do not create a real release. The hosted workflow is configured to run the .NET 8 core tests before publication; dotnet and the Windows game environment are unavailable here. Real GitHub Actions execution and Windows/gameplay acceptance remain unverified. No framework version, gameplay behavior or updater code changes are included in this automation.
+
+## v0.6.24 experimental hero forms
+
+Static inspection of the supplied verified IL2CPP metadata identifies SwapPieceHelper.TransformIntoNewPiece(Piece, PieceTypeId, PlayerId, Team, bool, CharacterSheetId, bool, bool, Action), the hero spawn processor's swap helper and the RequestHandlerDebugCommandFactory/Create/HandleRequest entry points. Disassembly confirms that the native transformation builds SpawnData, gets the existing owner, carries selected traits, invokes PieceSpawner.SpawnPieces, makes a reversible transform record, and uses PieceDespawner; the spawner grants registered cards. The native debug dispatcher returns null for an unregistered command, so a BMF nonce without a matching active hook cannot run the transformation. BMF does not edit piece fields, assets, saves or directly run Unity coroutines. Native simulation handler and helper captures must share GameState identity, and the simulation and HUD session/owner IDs must agree. Request consumption requires the same verified local session, currently active owned hero and registered target definition.
+
+The three new source contract tests were red before implementation and pass afterward; existing map tests remain green. No installed Windows game/interop/SDK in this environment, so neither C# compilation against the user's interop set nor in-game transformation, move, attack, card hand, turn queue, death/revert or persistence is verified. Test in a fresh disposable solo campaign: enable Dev mode before starting, refresh the editor, toggle Hero forms, select a simple 1x1 creature such as GoblinFighter, target the current hero, confirm once; observe whether it appears and can actually move, spend AP, play cards and end turn. Check invalid enemy target, other hero's turn, stacked transform, cancel, scene change and multiplayer cannot dispatch. If the request is not observed, share the precise toolbar status and BepInEx log. Existing v0.6.23 user logs confirm the direct-map spawn/removal UI is working.
 
 ## v0.6.23 captured direct-map failures
 

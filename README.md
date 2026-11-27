@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.23-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.24-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,14 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.24 — experimental playable creature forms
+
+The user confirmed v0.6.23 direct map placement/removal works; their runtime log records a GoblinFighter removal and BarBrawlLoggerMelee and BlackPuddingSmall spawn requests. Those tools remain available.
+
+**F10 > Level Editor > Refresh > Hero forms.** Select a registered living 1x1 creature (including enemies and eligible ordinary heroes), then **Transform hero**. During the hero's turn middle-click that hero on the 3D board and press **Confirm hero form**. Developer mode and House rules must be enabled before starting a new disposable local solo campaign. The game must be idle.
+
+BMF submits a one-time native debug request and uses the game's actual simulation-side reversible transformation routine, retaining the real hero sheet, player ownership and Players team. A request accepted by the handler is not proof of a completed or playable transformation. The native transformation rules may change cards, stats and available actions. This is a first experimental implementation, not an unrestricted hero-select class unlock: multi-tile creatures, NPCs, props, nested transformations and a separate manual revert button are not supported yet. It does not promise persistence across encounters or saves. Back up saves and test only in a disposable campaign. No AI execution or enemy ownership changes are made outside the transformation request. Native request/processor capture and local session identity must match; otherwise the tool declines the request and shows a reason.
 
 ## v0.6.23 — direct map request and missing armour fixes
 
