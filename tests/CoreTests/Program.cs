@@ -46,6 +46,15 @@ foreach (bool houseRulesEnabled in new[] { false, true })
     Check(MenuModuleVisibility.IsTabVisible("Health", developerMode, houseRulesEnabled) == houseRulesEnabled, "health follows house-rules enabled preference");
     Check(MenuModuleVisibility.IsTabVisible("Presets", developerMode, houseRulesEnabled) == houseRulesEnabled, "presets follows house-rules enabled preference");
 }
+foreach (bool developerMode in new[] { false, true })
+foreach (bool houseRulesEnabled in new[] { false, true })
+foreach (bool heroFormsEnabled in new[] { false, true })
+{
+    Check(MenuModuleVisibility.IsTabVisible("Hero Forms", developerMode, houseRulesEnabled, heroFormsEnabled) ==
+        (developerMode && heroFormsEnabled), "Hero Forms requires independent enable and developer mode");
+    Check(MenuModuleVisibility.IsTabVisible("Level Editor", developerMode, houseRulesEnabled, heroFormsEnabled) ==
+        developerMode, "Hero Forms switch does not hide Level Editor");
+}
 Check(UpdatePolicy.ForDisplay("Checking for updates...", "Update status unavailable") == "Checking for updates...", "normal status preserved");
 Check(UpdatePolicy.ForDisplay("Update failed: GITHUB.com unavailable", "Update failed; see reports") == "Update failed; see reports", "provider in status hidden");
 Check(UpdatePolicy.ForDisplay("Update failed: raw.githubusercontent.com", "Update failed; see reports") == "Update failed; see reports", "provider host hidden");

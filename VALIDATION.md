@@ -1,8 +1,12 @@
-# v0.6.24-alpha validation
+# v0.6.25-alpha validation
 
 ## First stable release automation
 
 The 12 Python release-gate and simulated publication tests pass locally. These cover the current alpha skip, exact stable-version eligibility, inconsistent version rejection, wrong branch refusal, mismatched tag refusal, versioned source archive and matching SHA-256 checksum, and repeated-run protection. The publication tests use a temporary local Git remote and mock GitHub CLI; they do not create a real release. The hosted workflow is configured to run the .NET 8 core tests before publication; dotnet and the Windows game environment are unavailable here. Real GitHub Actions execution and Windows/gameplay acceptance remain unverified. No framework version, gameplay behavior or updater code changes are included in this automation.
+
+## v0.6.25 independent Hero Forms visibility and request gate
+
+Three added source contract tests fail against v0.6.24 and pass with the independent saved live config switch, separate searchable Hero Forms tab, menu/target lifecycle and native request gate. CoreTests includes a full developer/house-rules/hero-forms visibility matrix. On Windows, verify that enabling/disabling Hero Forms in Mods immediately shows/hides the tab with Developer mode enabled, the preference survives restart, the Level Editor still offers only ordinary spawning/removal, and hiding or leaving Hero Forms cancels unconsumed work. The existing transform acceptance test remains pending; disabling does not revert a completed transformation. No Windows game SDK or dotnet in this environment, so compilation and in-game menu/runtime behavior remain unverified.
 
 ## v0.6.24 experimental hero forms
 

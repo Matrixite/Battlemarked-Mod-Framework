@@ -32,8 +32,9 @@ internal static class HeroForms
     private static Type Logic(string name) => Load("GameLogic", "Jade.GameLogic." + name);
     private static object Get(object obj, string name) => DebugWorkspace.ReadMember(obj, name);
     private static object Call(object obj, string name) => DebugWorkspace.Call(obj, name);
-    private static bool Active => ctx != null && Plugin.Instance?.VerifiedGame == true &&
+    private static bool CaptureAllowed => ctx != null && Plugin.Instance?.VerifiedGame == true &&
         Plugin.Instance?.DeveloperModeEnabled == true && Environment.CurrentManagedThreadId == mainThread;
+    private static bool Active => CaptureAllowed && Plugin.Instance?.HeroFormsEnabled == true;
     private static HarmonyMethod Hook(string name) => new HarmonyMethod(typeof(HeroForms).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static));
     private static MethodInfo Exact(Type type, string name, bool isStatic, Type result, params Type[] args)
     {
@@ -113,7 +114,7 @@ internal static class HeroForms
     }
     private static void CaptureHandler(object __1, object __result)
     {
-        if (!Active) return;
+        if (!CaptureAllowed) return;
         try
         {
             if (__1 is not Il2CppObjectBase state || state.Pointer == IntPtr.Zero ||
@@ -126,7 +127,7 @@ internal static class HeroForms
     }
     private static void CaptureSwap(object __instance)
     {
-        if (!Active) return;
+        if (!CaptureAllowed) return;
         try
         {
             var state = Get(__instance, "gameState") as Il2CppObjectBase;
@@ -193,6 +194,7 @@ internal static class HeroForms
 
     internal static string Queue(LevelEditor.Context context, object piece, UObject definition, object id)
     {
+        if (Plugin.Instance?.HeroFormsEnabled != true) throw new InvalidOperationException("Hero Forms disabled in Mods.");
         if (!Active || transform == null) throw new InvalidOperationException(Status);
         if (Waiting) throw new InvalidOperationException("A hero form request is already pending.");
         if (!HouseRules.TryGetLevelEditorContext(out var live, out var reason) || !context.SameSession(live) ||

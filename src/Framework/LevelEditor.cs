@@ -102,7 +102,7 @@ internal sealed class LevelEditor
         cells = new TileCell[WindowSize, WindowSize];
         selectedTile = null; selectedEnemy = null; pending = null;
         pendingRemoval = null; removalTarget = null; mapMode = 0; mapPickRequested = false;
-        enemies.Clear(); matches.Clear(); forms.Clear(); showForms = false;
+        enemies.Clear(); matches.Clear(); forms.Clear();
         pendingForm = null; heroTarget = null; HeroForms.Cancel();
         confirming = refresh = pan = false;
         panX = panY = enemyPage = 0;
@@ -112,13 +112,23 @@ internal sealed class LevelEditor
 
     internal void Leave() { Clear(); scene = null; }
 
-    internal void Tick(bool enabled)
+    // Both pages share exactly the same verified session and map picker, but
+    // never carry target/selection/queued state from one page into the other.
+    private void SelectView(bool heroView)
+    {
+        if (showForms == heroView) return;
+        Leave();
+        showForms = heroView;
+    }
+
+    internal void Tick(bool enabled, bool heroView = false)
     {
         if (!enabled)
         {
             if (scene.HasValue) Leave();
             return;
         }
+        SelectView(heroView);
         try
         {
             var current = SceneManager.GetActiveScene();
@@ -426,9 +436,9 @@ internal sealed class LevelEditor
                 try
                 {
                     var def = cast.Invoke(obj, null) as UObject;
-                    if (ValidateEnemy(context, config, def, out _, out _, out string key) && seen.Add(key))
+                    if (!showForms && ValidateEnemy(context, config, def, out _, out _, out string key) && seen.Add(key))
                         enemies.Add(new Enemy(def, def.name ?? key, key));
-                    if (ValidateFormDefinition(context, config, def, out _, out string formKey) && seenForms.Add(formKey))
+                    if (showForms && plugin.HeroFormsEnabled && ValidateFormDefinition(context, config, def, out _, out string formKey) && seenForms.Add(formKey))
                         forms.Add(new Enemy(def, def.name ?? formKey, formKey));
                 }
                 catch (Exception ex)
@@ -439,7 +449,7 @@ internal sealed class LevelEditor
         enemies.Sort(CompareEnemies);
         forms.Sort(CompareEnemies);
         ApplyFilter();
-        status = enemies.Count + " eligible enemies / " + Math.Min(inspected, ScanLimit) + " scanned" +
+        status = (showForms ? forms.Count + " eligible hero forms / " : enemies.Count + " eligible enemies / ") + Math.Min(inspected, ScanLimit) + " scanned" +
             (inspected > ScanLimit ? " (capped)" : "") + (skipped > 0 ? " | " + skipped + " unreadable" : "") + ".";
         log.LogInfo("BMF level editor: " + status + " Source: current HUD registry and loaded native classification config.");
     }
@@ -576,6 +586,7 @@ internal sealed class LevelEditor
     private void BeginMapTool(int mode)
     {
         if (snapshot == null || ((mode == 1 || mode == 3) && selectedEnemy == null)) return;
+        if (mode == 3 && (!showForms || !plugin.HeroFormsEnabled)) return;
         mapMode = mode;
         selectedTile = null; removalTarget = null; confirming = false;
         pending = null; pendingRemoval = null; pendingForm = null; heroTarget = null; mapPickRequested = false; refresh = pan = false;
@@ -670,6 +681,7 @@ internal sealed class LevelEditor
     {
         try
         {
+            if (!showForms || !plugin.HeroFormsEnabled) throw new InvalidOperationException("Hero Forms disabled or tab changed.");
             if (heroTarget == null || !HouseRules.TryGetLevelEditorContext(out var live, out _) || !command.Snapshot.SameSession(live))
                 throw new InvalidOperationException("Hero form target or session changed.");
             var reader = new BoardReader(live);
@@ -824,6 +836,7 @@ internal sealed class LevelEditor
     internal bool DrawMapTool()
     {
         if (mapMode == 0) return false;
+        if (mapMode == 3 && !plugin.HeroFormsEnabled) { EndMapTool(); return false; }
         try
         {
             float width = Math.Min(610f, Screen.width - 24f);
@@ -878,6 +891,7 @@ internal sealed class LevelEditor
 
     internal void Draw(float x, float y, float width, float height)
     {
+        SelectView(false);
         try
         {
             float inner = width - 30, left = inner * 0.48f, right = inner - left - 10, rx = x + 25 + left;
@@ -885,25 +899,19 @@ internal sealed class LevelEditor
             void Label(float top, string value) => GUI.Label(new Rect(x + 15, y + top, inner, 22), value);
             bool Button(float top, float l, float w, string value) => GUI.Button(new Rect(x + l, y + top, w, 24), value);
             Label(91, "Runtime level editor | Disposable local solo only; back up saves.");
-            float actionWidth = inner / 4f;
+            float actionWidth = inner / 3f;
             if (Button(115, 15, actionWidth - 3, "Refresh"))
             { refresh = true; pan = confirming = false; pending = null; }
-            if (Button(115, 15 + actionWidth, actionWidth - 3, showForms ? "Transform hero" : "Place on map"))
+            if (Button(115, 15 + actionWidth, actionWidth - 3, "Place on map"))
             {
                 if (snapshot != null && selectedEnemy != null && !refresh && !pan)
-                { BeginMapTool(showForms ? 3 : 1); return; }
+                { BeginMapTool(1); return; }
                 status = "Refresh and select an enemy first.";
             }
             if (Button(115, 15 + 2 * actionWidth, actionWidth - 3, "Remove on map"))
             {
                 if (snapshot != null && !refresh && !pan) { BeginMapTool(2); return; }
                 status = "Refresh the current solo board first.";
-            }
-            if (Button(115, 15 + 3 * actionWidth, actionWidth - 3, showForms ? "Enemy list" : "Hero forms"))
-            {
-                showForms = !showForms; selectedEnemy = null; confirming = false; pending = null;
-                ApplyFilter();
-                status = showForms ? "Select a creature form, then Transform hero during your hero's turn." : "Select an enemy to place.";
             }
             if (snapshot == null)
             {
@@ -942,8 +950,8 @@ internal sealed class LevelEditor
             if (GUI.Button(new Rect(rx + right - 34, y + footer - 25, 34, 24), ">")) enemyPage = Math.Min(pages - 1, enemyPage + 1);
             Label(footer - 2, selectedTile == null ? "Board " + sizeX + "x" + sizeY + " | origin (" + startX + "," + startY + ") | . free # blocked P piece" :
                 "(" + selectedTile.X + "," + selectedTile.Y + ") " + selectedTile.Detail);
-            Label(footer + 20, (showForms ? "Hero form: " : "Enemy: ") + (selectedEnemy?.Name ?? "select registered 1x1 creature from list"));
-            if (!showForms && selectedTile?.Available == true && selectedEnemy != null && !refresh && !pan && pending == null)
+            Label(footer + 20, "Enemy: " + (selectedEnemy?.Name ?? "select registered 1x1 enemy from list"));
+            if (selectedTile?.Available == true && selectedEnemy != null && !refresh && !pan && pending == null)
             {
                 if (Button(footer + 42, 15, inner, confirming ? "Confirm enemy spawn (local solo)" : "Place selected enemy"))
                 {
@@ -951,7 +959,7 @@ internal sealed class LevelEditor
                     else confirming = true;
                 }
             }
-            else Label(footer + 42, showForms ? "Select a form, press Transform hero, then middle-click your current hero." : "Select a free tile and eligible enemy.");
+            else Label(footer + 42, "Select a free tile and eligible enemy.");
             Label(height - 27, status);
         }
         catch (Exception ex)
@@ -960,6 +968,59 @@ internal sealed class LevelEditor
             if (!guiErrorLogged) log.LogWarning("BMF level editor GUI: " + ex.GetBaseException().Message);
             guiErrorLogged = true;
             GUI.Label(new Rect(x + 15, y + 118, width - 30, 24), "Editor interface unavailable; see BepInEx log.");
+        }
+    }
+
+    internal void DrawHeroForms(float x, float y, float width, float height)
+    {
+        if (!plugin.HeroFormsEnabled) return;
+        SelectView(true);
+        try
+        {
+            float inner = width - 30;
+            void Label(float top, string value) => GUI.Label(new Rect(x + 15, y + top, inner, 22), value);
+            Label(91, "Hero forms (experimental) | Disposable local solo only; back up saves.");
+            float half = (inner - 6) / 2;
+            if (GUI.Button(new Rect(x + 15, y + 115, half, 25), "Refresh forms"))
+            { refresh = true; selectedEnemy = null; pendingForm = null; }
+            if (GUI.Button(new Rect(x + 21 + half, y + 115, half, 25), "Transform hero"))
+            {
+                if (snapshot != null && selectedEnemy != null && !refresh)
+                { BeginMapTool(3); return; }
+                status = "Refresh and select a creature form first.";
+            }
+            if (snapshot == null)
+            {
+                Label(146, status);
+                Label(172, "House rules must be running; start a new local solo campaign.");
+                return;
+            }
+            var typed = GUI.TextField(new Rect(x + 15, y + 145, inner, 25), filter, 100);
+            if (typed != filter) { filter = typed; ApplyFilter(); selectedEnemy = null; pendingForm = null; }
+            float footer = height - 103;
+            int rows = Math.Max(1, (int)((footer - 203) / 24));
+            int pages = Math.Max(1, (matches.Count + rows - 1) / rows);
+            enemyPage = Math.Clamp(enemyPage, 0, pages - 1);
+            for (int i = 0; i < rows && enemyPage * rows + i < matches.Count; i++)
+            {
+                var form = matches[enemyPage * rows + i];
+                if (GUI.Button(new Rect(x + 15, y + 174 + i * 24, inner, 23), (ReferenceEquals(selectedEnemy, form) ? "* " : "") + form.Name))
+                { selectedEnemy = form; pendingForm = null; }
+            }
+            if (GUI.Button(new Rect(x + 15, y + footer - 25, 65, 24), "<")) enemyPage = Math.Max(0, enemyPage - 1);
+            GUI.Label(new Rect(x + 84, y + footer - 25, inner - 140, 23), (enemyPage + 1) + "/" + pages + " | " + matches.Count + " forms");
+            if (GUI.Button(new Rect(x + 15 + inner - 65, y + footer - 25, 65, 24), ">")) enemyPage = Math.Min(pages - 1, enemyPage + 1);
+            Label(footer, "Hero form: " + (selectedEnemy?.Name ?? "select registered 1x1 creature from list"));
+            Label(footer + 24, "Select a form, press Transform hero, then middle-click your current hero.");
+            Label(footer + 48, "Native transformation rules may change cards and stats.");
+            Label(height - 27, status);
+        }
+        catch (Exception ex)
+        {
+            Clear();
+            if (!guiErrorLogged) log.LogWarning("BMF Hero Forms GUI: " + ex.GetBaseException().Message);
+            guiErrorLogged = true;
+            GUI.Label(new Rect(x + 15, y + 118, width - 30, 24), "Hero Forms unavailable; see BepInEx log.");
         }
     }
 

@@ -20,14 +20,14 @@ internal sealed class ModMenu
     private readonly DebugWorkspace debugWorkspace;
     private readonly LevelEditor levelEditor;
     private readonly ManualLogSource log;
-    private readonly ConfigEntry<bool> enabled, developerMode;
+    private readonly ConfigEntry<bool> enabled, developerMode, heroFormsEnabled;
     private readonly ConfigFile config;
     private readonly ConfigEntry<int> savedX, savedY;
     private readonly MenuPosition position;
     private bool open, broken, guiSeen, usingPolling;
     private int page;
     private int tab;
-    private static readonly string[] Tabs = { "Overview", "AP rules", "Health", "Presets", "Mods", "Reports", "Updates", "Dev Tools", "Level Editor" };
+    private static readonly string[] Tabs = { "Overview", "AP rules", "Health", "Presets", "Mods", "Reports", "Updates", "Dev Tools", "Level Editor", "Hero Forms" };
     private string message = "Settings apply on next launch.";
     private Func<bool> poll;
     private bool inputChecked;
@@ -47,6 +47,7 @@ internal sealed class ModMenu
         levelEditor = new LevelEditor(plugin, log);
         enabled = config.Bind("Menu", "Enabled", true, "Enable experimental desktop mod manager.");
         developerMode = config.Bind("Menu", "DeveloperMode", false, "Show built-in diagnostic and example modules, Reports, Dev Tools and Level Editor. Disabling also closes a native debug menu opened through BMF; module settings are unchanged.");
+        heroFormsEnabled = config.Bind("Menu", "HeroFormsEnabled", true, "Show the experimental Hero Forms tab and allow verified local transformations. Developer mode and running House rules are still required. Applies immediately.");
         open = config.Bind("Menu", "StartOpen", false, "Open menu automatically; fallback if F10 is unavailable.").Value;
         savedX = config.Bind("Menu", "PositionX", -1, "Last menu left position in pixels; -1 centers horizontally.");
         savedY = config.Bind("Menu", "PositionY", -1, "Last menu top position in pixels; -1 centers vertically.");
@@ -92,7 +93,7 @@ internal sealed class ModMenu
     }
     private void SetOpen(bool value)
     {
-        if (!value) { FinishDrag(); if (tab == 8) levelEditor.Leave(); }
+        if (!value) { FinishDrag(); if (tab == 8 || tab == 9) levelEditor.Leave(); }
         open = value;
     }
     private void HandleDrag(Event e, float x, float y, float width, float height)
@@ -126,6 +127,7 @@ internal sealed class ModMenu
         }
     }
     internal bool DeveloperModeEnabled => developerMode.Value && enabled.Value && !broken;
+    internal bool HeroFormsEnabled => heroFormsEnabled.Value && enabled.Value && !broken;
     internal void Tick()
     {
         if (!developerMode.Value) nativeDebugMenu.CloseOwned();
@@ -139,7 +141,8 @@ internal sealed class ModMenu
             try { usingPolling = true; if (poll()) SetOpen(!open); }
             catch (Exception ex) { poll = null; usingPolling = false; log.LogWarning("BMF hotkey polling unavailable; using GUI keyboard events: " + ex.Message); }
         }
-        levelEditor.Tick(developerMode.Value && enabled.Value && !broken && open && tab == 8);
+        if (tab == 9) levelEditor.Tick(DeveloperModeEnabled && HeroFormsEnabled && open, true);
+        else levelEditor.Tick(developerMode.Value && enabled.Value && !broken && open && tab == 8);
     }
     private void DrawUpdateWarning(float x, float y, float width)
     {
@@ -181,7 +184,7 @@ internal sealed class ModMenu
             }
             if (!open) return;
             // Compact targeting toolbar exposes the actual 3D map.
-            if (tab == 8 && developerMode.Value && levelEditor.DrawMapTool()) return;
+            if ((tab == 8 || tab == 9 && HeroFormsEnabled) && developerMode.Value && levelEditor.DrawMapTool()) return;
             float width = Math.Min(800f, Screen.width - 24f), height = Math.Min(530f, Screen.height - 24f);
             if (width < 460f || height < 410f) { FinishDrag(); return; }
             float x = position.X(Screen.width, width), y = position.Y(Screen.height, height);
@@ -195,18 +198,18 @@ internal sealed class ModMenu
             bool houseRulesEnabled = plugin.IsEnabledForNextLaunch(HouseRules.ModuleId);
             var visibleTabs = new List<int>();
             for (int i = 0; i < Tabs.Length; i++)
-                if (MenuModuleVisibility.IsTabVisible(Tabs[i], developerMode.Value, houseRulesEnabled)) visibleTabs.Add(i);
-            if (tab == 8 && !visibleTabs.Contains(tab)) levelEditor.Leave();
+                if (MenuModuleVisibility.IsTabVisible(Tabs[i], developerMode.Value, houseRulesEnabled, heroFormsEnabled.Value)) visibleTabs.Add(i);
+            if ((tab == 8 || tab == 9) && !visibleTabs.Contains(tab)) levelEditor.Leave();
             if (!visibleTabs.Contains(tab)) tab = 4; // Mods, where developer mode can be restored.
             float tabWidth = (width - 24) / visibleTabs.Count;
             for (int column = 0; column < visibleTabs.Count; column++)
             {
                 int i = visibleTabs[column];
-                string title = i == 8 && width < 700 ? "Editor" : Tabs[i];
+                string title = i == 8 && width < 700 ? "Editor" : i == 9 && width < 700 ? "Forms" : Tabs[i];
                 if (GUI.Button(new Rect(x + 12 + column * tabWidth, y + 58, tabWidth - 3, 28),
                     (tab == i ? "[" + title + "]" : title)))
                 {
-                    if (tab == 8 && i != 8) levelEditor.Leave();
+                    if ((tab == 8 || tab == 9) && tab != i) levelEditor.Leave();
                     tab = i;
                 }
             }
@@ -349,17 +352,38 @@ internal sealed class ModMenu
                 return;
             }
 
+            if (tab == 9)
+            {
+                if (DeveloperModeEnabled && HeroFormsEnabled) levelEditor.DrawHeroForms(x, y, width, height);
+                return;
+            }
+
             var modules = new List<MenuModule>();
             foreach (var m in plugin.MenuModules)
                 if (MenuModuleVisibility.IsVisible(m.Id, developerMode.Value)) modules.Add(m);
             Label(95, (developerMode.Value ? "Developer view" : "Installed modules") + " | module switches apply next launch");
-            if (modules.Count == 0) Label(125, "No visible modules installed.");
-            int rows = Math.Max(1, (int)((height - 184) / 49));
+            // Hero Forms is a live feature preference, not a restart-only module.
+            // Keep its switch visible even when Developer mode is off.
+            Label(125, "Hero forms (experimental)");
+            GUI.Label(new Rect(x + 15, y + 147, width - 120, 23), (heroFormsEnabled.Value ? "ON" : "OFF") + " | Live; Dev mode + House rules needed");
+            if (GUI.Button(new Rect(x + width - 105, y + 132, 93, 27), heroFormsEnabled.Value ? "Disable" : "Enable"))
+            {
+                try
+                {
+                    heroFormsEnabled.Value = !heroFormsEnabled.Value;
+                    if (!heroFormsEnabled.Value) { HeroForms.Cancel(); levelEditor.Leave(); }
+                    config.Save();
+                    message = heroFormsEnabled.Value ? "Hero Forms enabled. Turn on Developer mode to show the tab." : "Hero Forms disabled; pending form requests cancelled.";
+                }
+                catch (Exception ex) { message = "Could not save Hero Forms setting; see BepInEx log."; log.LogWarning(ex.Message); }
+            }
+            if (modules.Count == 0) Label(174, "No visible modules installed.");
+            int rows = Math.Max(1, (int)((height - 233) / 49));
             int pages = Math.Max(1, (modules.Count + rows - 1) / rows);
             page = Math.Max(0, Math.Min(page, pages - 1));
             for (int i = 0; i < rows && page * rows + i < modules.Count; i++)
             {
-                var m = modules[page * rows + i]; float top = y + 125 + i * 49;
+                var m = modules[page * rows + i]; float top = y + 174 + i * 49;
                 GUI.Label(new Rect(x + 15, top, width - 120, 23), m.Name);
                 GUI.Label(new Rect(x + 15, top + 22, width - 120, 23), (plugin.IsRunning(m.Id) ? "Running" : "Not running") + " | Next launch: " + (m.Enabled.Value ? "enabled" : "disabled"));
                 if (GUI.Button(new Rect(x + width - 105, top + 7, 93, 27), m.Enabled.Value ? "Disable" : "Enable"))
@@ -376,7 +400,7 @@ internal sealed class ModMenu
                 try
                 {
                     developerMode.Value = !developerMode.Value;
-                    if (!developerMode.Value) nativeDebugMenu.CloseOwned();
+                    if (!developerMode.Value) { nativeDebugMenu.CloseOwned(); HeroForms.Cancel(); levelEditor.Leave(); }
                     page = 0;
                     config.Save();
                     message = developerMode.Value ? "Development modules, Reports, Dev Tools and Level Editor visible." : "Development modules, Reports, Dev Tools and Level Editor hidden.";
