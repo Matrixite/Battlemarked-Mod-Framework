@@ -21,7 +21,7 @@ internal static class HeroFormCards
     private sealed class Ticket
     {
         internal LevelEditor.Context Context;
-        internal Il2CppObjectBase State, Board, Spawner, OriginalPiece, OriginalInventory;
+        internal Il2CppObjectBase State, Board, Spawner, OriginalPiece, OriginalInventory, RootInventory;
         internal int SourceId;
         internal ulong Owner;
         internal string Sheet, FormKey, FormName;
@@ -128,7 +128,7 @@ internal static class HeroFormCards
     // Validate the selected form's real registered deck before the original
     // hero is despawned. The catalog is the game's PieceDefinition.Cards,
     // not a name match over all loaded CardDefinitions or guessed abilities.
-    internal static string Arm(LevelEditor.Context context, object state, object helper, object original, UObject definition)
+    internal static string Arm(LevelEditor.Context context, object state, object helper, object original, object root, UObject definition)
     {
         if (Call(definition, "get_PlayerControllable") is not bool normalHero)
             throw new InvalidOperationException("Form control type unavailable.");
@@ -146,6 +146,7 @@ internal static class HeroFormCards
         var ticket = new Ticket {
             Context = context, State = nativeState, Board = board, Spawner = spawner,
             OriginalPiece = Native(original, pieceType), OriginalInventory = Native(Get(original, "inventory"), inventoryType),
+            RootInventory = Native(Get(root, "inventory"), inventoryType),
             SourceId = (int)Call(Get(original, "pieceId"), "get_Id"), Owner = (ulong)Call(Get(original, "ownerId"), "get_Id"),
             Sheet = Sheet(original), FormKey = Key(Call(definition, "get_PieceTypeId")), FormName = definition.name,
             Expires = DateTime.UtcNow.AddSeconds(30)
@@ -310,6 +311,7 @@ internal static class HeroFormCards
             var piece = Native(__result, pieceType);
             var current = Native(Get(piece, "inventory"), inventoryType);
             if (SameNative(piece, ticket.OriginalPiece) || SameNative(current, ticket.OriginalInventory) ||
+                SameNative(current, ticket.RootInventory) ||
                 Get(piece, "isTransformedPiece") is not bool isForm || !isForm ||
                 Get(piece, "isPlayerControlled") is not bool player || !player ||
                 Get(piece, "team")?.ToString() != "Players" ||

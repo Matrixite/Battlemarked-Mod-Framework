@@ -165,20 +165,21 @@ internal static class HeroForms
         (!command.Automatic || command.AutomaticState == IntPtr.Zero ||
             state is Il2CppObjectBase native && native.Pointer == command.AutomaticState);
 
-    // Any healthy, ordinary 1x1 local party hero during an idle player turn.
-    // No nested transforms until native revert behavior has been accepted in-game.
+    // Any living local party hero during an idle player turn, including an
+    // existing transformed creature. The authoritative handler checks the
+    // native original record before allowing a repeated transformation.
     internal static void ValidatePiece(object state, object board, object piece)
     {
         if (piece is not Il2CppObjectBase native || native.Pointer == IntPtr.Zero ||
             !Model("Piece").IsInstanceOfType(piece) ||
             Get(piece, "isPlayerControlled") is not bool controlled || !controlled ||
             Get(piece, "isCreatureNonNpc") is not bool creature || !creature ||
-            Get(piece, "isTransformedPiece") is not bool transformed || transformed ||
+            Get(piece, "isTransformedPiece") is not bool transformed ||
             Get(piece, "isPOI") is not bool poi || poi ||
             Get(piece, "team")?.ToString() != "Players" ||
             string.IsNullOrWhiteSpace(Sheet(piece)) ||
             Call(Get(state, "hostPlayerId"), "get_Id") is not ulong host || host != Owner(piece))
-            throw new InvalidOperationException("Select a normal locally owned hero (not a transformed piece).");
+            throw new InvalidOperationException("Select a locally owned hero or transformed creature.");
         var type = Model("Piece");
         if (Exact(Model("PieceHelpers"), "IsDead", true, typeof(bool), type).Invoke(null, new[] { piece }) is not bool dead || dead)
             throw new InvalidOperationException("Hero has no living piece.");
@@ -189,8 +190,10 @@ internal static class HeroForms
             .Invoke(stats, hpArgs) is not bool hpFound || !hpFound || hpArgs[1] is not int hp || hp <= 0)
             throw new InvalidOperationException("Only a living hero with positive health can transform.");
         var size = Exact(Model("PieceSizeHelper"), "GetPieceTileSize", true, Model("IntPoint2D"), type).Invoke(null, new[] { piece });
-        if ((int)Get(size, "x") != 1 || (int)Get(size, "y") != 1)
-            throw new InvalidOperationException("Only 1x1 heroes supported.");
+        int width = (int)Get(size, "x"), height = (int)Get(size, "y");
+        if (width is < 1 or > 4 || height is < 1 or > 4 ||
+            (!transformed && (width != 1 || height != 1)))
+            throw new InvalidOperationException("Unsupported source hero/form footprint.");
         // Native SpawnPieces replaces the old piece at its actual turn-queue
         // index. It need not be the current index; preserve the active turn
         // and refuse pieces outside the live queue or an enemy's turn.
@@ -328,8 +331,12 @@ internal static class HeroForms
             if (registered == null || registered != command.Definition || Key(id) != command.Destination)
                 throw new InvalidOperationException("Native form definition changed.");
             ValidateFormFit(board, piece, registered);
-            string deckStatus = HeroFormCards.Arm(live, state, helper, piece, registered);
-            HeroFormPersistence.Arm(live, state, helper, piece, registered, command.Automatic);
+            // Native CreateOrUpdateExistingTransformRecord reuses the original
+            // record by replacement ID. Verify that record before requesting a
+            // switch rather than accidentally recording the intermediate form.
+            var original = HeroFormPersistence.RequireOriginalHero(state, piece);
+            string deckStatus = HeroFormCards.Arm(live, state, helper, piece, original, registered);
+            HeroFormPersistence.Arm(live, state, helper, piece, original, registered, command.Automatic);
             // Keep owner, Players team and real sheet. Native transformation
             // manages despawn, turn queue, form record, card/trait rules and events.
             __result = transform.Invoke(helper, new[] { piece, id, Get(piece, "ownerId"), Get(piece, "team"),

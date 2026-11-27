@@ -13,7 +13,7 @@ internal static class HeroFormPersistence
 {
     private static ModuleContext ctx;
     private static int mainThread;
-    private static Type pieceType, pieceIdType, formIdType, recordType;
+    private static Type pieceType, pieceIdType, formIdType;
     private static MethodInfo tryGetPiece, isDead;
     private static ConstructorInfo pieceIdCtor, formIdCtor;
     private static readonly Dictionary<Type, MemberInfo> transitionProcessors = new();
@@ -38,7 +38,7 @@ internal static class HeroFormPersistence
         internal Il2CppObjectBase State, Board, Spawner;
         internal string Session, Sheet, OriginalKey, FormKey, FormName, FormId, FormGuid;
         internal ulong Owner;
-        internal int OriginalId, ReplacementId;
+        internal int SourceId, OriginalId, ReplacementId;
         internal Stage Stage;
         internal DateTime Expires;
         internal bool BlockedReported, Automatic;
@@ -124,7 +124,6 @@ internal static class HeroFormPersistence
             pieceType = Model("Piece");
             pieceIdType = Model("PieceId");
             formIdType = Model("PieceTypeId");
-            recordType = Model("TransformedPiece");
             pieceIdCtor = pieceIdType.GetConstructor(new[] { typeof(int) });
             formIdCtor = formIdType.GetConstructor(new[] { typeof(string), typeof(string) });
             if (pieceIdCtor == null || formIdCtor == null) throw new InvalidOperationException("Native piece ID constructors unavailable.");
@@ -182,7 +181,7 @@ internal static class HeroFormPersistence
     // tracks enemy forms even when the definition has no registered cards.
     internal static void CancelArmed() { armed = null; }
 
-    internal static void Arm(LevelEditor.Context live, object state, object helper, object original, UObject definition, bool automatic)
+    internal static void Arm(LevelEditor.Context live, object state, object helper, object current, object original, UObject definition, bool automatic)
     {
         if (!Active) return;
         armed = null;
@@ -197,7 +196,7 @@ internal static class HeroFormPersistence
                 State = nativeState, Board = board, Spawner = spawner,
                 Session = Get(state, "sessionId") as string,
                 Owner = (ulong)Call(Get(original, "ownerId"), "get_Id"), Sheet = Sheet(original),
-                OriginalId = PieceId(original), OriginalKey = Key(Get(original, "typeId")),
+                SourceId = PieceId(current), OriginalId = PieceId(original), OriginalKey = Key(Get(original, "typeId")),
                 FormId = (string)Call(id, "get_Id"), FormGuid = (string)Call(id, "get_Guid"),
                 FormKey = Key(id), FormName = definition.name, Stage = ReadStage(state),
                 Expires = DateTime.UtcNow.AddSeconds(30), ReplacementId = -1, Automatic = automatic
@@ -206,7 +205,7 @@ internal static class HeroFormPersistence
                 board == null || board.Pointer == IntPtr.Zero ||
                 !SameNative(Get(spawner, "gameState"), state) ||
                 !MatchesSession(form, live.State) || string.IsNullOrWhiteSpace(form.Sheet) ||
-                form.OriginalId < 0 || !form.Stage.SameLevel(ReadStage(live.State))) return;
+                form.SourceId < 0 || form.OriginalId < 0 || !form.Stage.SameLevel(ReadStage(live.State))) return;
             armed = form;
         }
         catch (Exception ex) { ctx.Log.LogWarning("BMF hero form carry-over arm: " + ex.GetBaseException().Message); }
@@ -237,7 +236,7 @@ internal static class HeroFormPersistence
                 !SameNative(Get(form.State, "board"), form.Board) ||
                 Get(__0, "isTransformedPiece") is not bool transformed || !transformed ||
                 Get(__0, "pieceToReplace") is not Il2CppObjectBase replaced || replaced.Pointer == IntPtr.Zero ||
-                (int)Call(replaced, "get_Id") != form.OriginalId ||
+                (int)Call(replaced, "get_Id") != form.SourceId ||
                 Key(Get(__0, "pieceTypeId")) != form.FormKey ||
                 Call(Get(__0, "owner"), "get_Id") is not ulong owner || owner != form.Owner ||
                 Call(Get(__0, "characterSheetId"), "get_Id") as string != form.Sheet)
@@ -264,19 +263,51 @@ internal static class HeroFormPersistence
         return tryGetPiece.Invoke(null, args) is bool found && found ? args[2] : null;
     }
 
-    private static bool HasNativeOriginal(Form form, object state)
+    // A repeated transform must keep the game's first original hero, not
+    // the currently displayed creature. Read the unique native record in
+    // the authoritative simulation; HUD state need not expose these records.
+    // This lookup is also available when optional carry-over hooks cannot attach.
+    internal static object RequireOriginalHero(object state, object piece)
+    {
+        if (Get(piece, "isTransformedPiece") is not bool transformed)
+            throw new InvalidOperationException("Native transformation state missing.");
+        if (!transformed) return piece;
+        var original = GetNativeOriginal(state, PieceId(piece));
+        if (original is not Il2CppObjectBase native || native.Pointer == IntPtr.Zero ||
+            !Model("Piece").IsInstanceOfType(original) || SameNative(piece, original) ||
+            Get(original, "isTransformedPiece") is not bool originalTransformed || originalTransformed ||
+            Get(original, "isPlayerControlled") is not bool controlled || !controlled ||
+            Get(original, "isCreatureNonNpc") is not bool creature || !creature ||
+            Get(original, "isPOI") is not bool poi || poi ||
+            Get(original, "team")?.ToString() != "Players" ||
+            Call(Get(original, "ownerId"), "get_Id") is not ulong owner ||
+            Call(Get(piece, "ownerId"), "get_Id") is not ulong sourceOwner || owner != sourceOwner ||
+            string.IsNullOrWhiteSpace(Sheet(piece)) || Sheet(original) != Sheet(piece) ||
+            PieceId(original) < 0 || PieceId(original) == PieceId(piece))
+            throw new InvalidOperationException("This form has no verified original hero record; switching was cancelled.");
+        return original;
+    }
+
+    private static object GetNativeOriginal(object state, int replacementId)
     {
         var records = Get(state, "transformedPieces");
-        if (Call(records, "get_Count") is not int count || count < 0 || count > 128) return false;
-        var item = Exact(records.GetType(), "get_Item", false, recordType, typeof(int));
+        if (records == null || Call(records, "get_Count") is not int count || count < 0 || count > 128) return null;
+        var item = Exact(records.GetType(), "get_Item", false, Model("TransformedPiece"), typeof(int));
+        object match = null;
         for (int i = 0; i < count; i++)
         {
             var r = item.Invoke(records, new object[] { i });
-            if (r == null || Call(Get(r, "replacementPieceId"), "get_Id") is not int id || id != form.ReplacementId) continue;
-            var original = Get(r, "piece");
-            return IsOwnedPiece(form, original, false, form.OriginalKey) && PieceId(original) == form.OriginalId;
+            if (r == null || Call(Get(r, "replacementPieceId"), "get_Id") is not int id || id != replacementId) continue;
+            if (match != null) return null; // Ambiguous native record.
+            match = r;
         }
-        return false;
+        return match == null ? null : Get(match, "piece");
+    }
+
+    private static bool HasNativeOriginal(Form form, object state)
+    {
+        var original = GetNativeOriginal(state, form.ReplacementId);
+        return IsOwnedPiece(form, original, false, form.OriginalKey) && PieceId(original) == form.OriginalId;
     }
 
     // Both verified native success paths yield ForceRevertValidTransformations

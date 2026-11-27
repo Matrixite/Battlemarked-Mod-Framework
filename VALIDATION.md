@@ -1,4 +1,12 @@
-# v0.6.36-alpha validation
+# v0.6.37-alpha validation
+
+## v0.6.37 repeated Hero Forms
+
+Verified the supplied GameAssembly fingerprint. GameLogic.dll metadata identifies SwapPieceHelper.TransformIntoNewPiece (token 0x06000745), CreateOrUpdateExistingTransformRecord (0x06000746, native 0x1807ff570), and its spawn callback <TransformIntoNewPiece>b__0 (0x06000752, 0x180810b30). The native record helper searches by the replaced piece's ID and returns the existing original record when the reversible flag is true; only a missing record causes allocation. The spawn callback updates replacementPieceId on that same record to the new piece's ID without replacing the saved original. BMF now permits a living transformed party piece, including supported large footprints, as a source. The authoritative handler reads the unique native record and validates original hero ownership, sheet, team and untransformed identity before any deck arm or transformation. The deck ticket checks the original hero inventory as well as the immediate source form's inventory; carry-over tickets distinguish source replacement ID from original hero ID/type. The same registered destination, footprint, session and turn guards apply.
+
+Four regression checks failed before the implementation and pass afterward; all 72 Python Dev Tools/release checks pass. No Windows interop SDK, dotnet or live game is available here, so Windows compilation and gameplay are not verified.
+
+Acceptance: in a disposable local solo campaign, transform a hero into a small enemy, switch to another enemy, then to a larger boss with sufficient space, then back to a small enemy. Verify new cards appear without moving, the selected hero remains in the party's turn order, and other heroes are unaffected. Repeat with two independently transformed heroes, switch a noncurrent hero during a local hero turn, complete a level and verify the latest forms restore, and exercise native reversion to verify the original hero and inventory are restored rather than the intermediate creature. Verify same-form, blocked space, missing original record, enemy turn, dead hero, disabled module and multiplayer do not dispatch an unsafe change. Inspect BepInEx log if native transformation or carry-over fails.
 
 ## v0.6.36 Hero Forms level carry-over
 

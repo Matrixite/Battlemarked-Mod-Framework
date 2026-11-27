@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.36-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.37-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,12 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.37 — Switch between Hero Forms
+
+In **F10 > Hero Forms**, select a different creature, press **Transform hero**, middle-click an already transformed local party hero, and confirm. Switching directly between enemy forms, including larger monsters and bosses, uses the same reversible native transformation request. A source form can occupy up to the supported 4×4 native footprint; the new form must fit at the current center and orientation with the existing piece excluded. The authoritative handler requires a unique, matching original hero record before allowing a repeat transformation. The game updates that record's replacement ID rather than stacking records, and BMF publishes a freshly prepared enemy deck for the new form without modifying the original hero inventory. The v0.6.36 level carry-over remembers the latest confirmed enemy form for each hero, retaining the first original hero identity.
+
+Existing local solo, living hero, turn order, ownership, feature-switch and idle queue requirements remain. Merely selecting the same form again is rejected. Missing or ambiguous original records are rejected rather than risking loss of the original hero. Windows compilation and in-game verification remain pending; test in a disposable solo campaign.
 
 ## v0.6.36 — Hero Forms carry over between levels
 
