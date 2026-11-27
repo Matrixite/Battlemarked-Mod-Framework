@@ -18,6 +18,7 @@ internal sealed class ModMenu
     private readonly Plugin plugin;
     private readonly NativeDebugMenu nativeDebugMenu;
     private readonly DebugWorkspace debugWorkspace;
+    private readonly LevelEditor levelEditor;
     private readonly ManualLogSource log;
     private readonly ConfigEntry<bool> enabled, developerMode;
     private readonly ConfigFile config;
@@ -26,7 +27,7 @@ internal sealed class ModMenu
     private bool open, broken, guiSeen, usingPolling;
     private int page;
     private int tab;
-    private static readonly string[] Tabs = { "Overview", "AP rules", "Health", "Presets", "Mods", "Reports", "Updates", "Dev Tools" };
+    private static readonly string[] Tabs = { "Overview", "AP rules", "Health", "Presets", "Mods", "Reports", "Updates", "Dev Tools", "Level Editor" };
     private string message = "Settings apply on next launch.";
     private Func<bool> poll;
     private bool inputChecked;
@@ -43,8 +44,9 @@ internal sealed class ModMenu
         this.plugin = plugin; this.log = log; this.config = config;
         nativeDebugMenu = new NativeDebugMenu(plugin, log);
         debugWorkspace = new DebugWorkspace(plugin, log);
+        levelEditor = new LevelEditor(plugin, log);
         enabled = config.Bind("Menu", "Enabled", true, "Enable experimental desktop mod manager.");
-        developerMode = config.Bind("Menu", "DeveloperMode", false, "Show built-in diagnostic and example modules, Reports and Dev Tools. Disabling also closes a native debug menu opened through BMF; module settings are unchanged.");
+        developerMode = config.Bind("Menu", "DeveloperMode", false, "Show built-in diagnostic and example modules, Reports, Dev Tools and Level Editor. Disabling also closes a native debug menu opened through BMF; module settings are unchanged.");
         open = config.Bind("Menu", "StartOpen", false, "Open menu automatically; fallback if F10 is unavailable.").Value;
         savedX = config.Bind("Menu", "PositionX", -1, "Last menu left position in pixels; -1 centers horizontally.");
         savedY = config.Bind("Menu", "PositionY", -1, "Last menu top position in pixels; -1 centers vertically.");
@@ -90,7 +92,7 @@ internal sealed class ModMenu
     }
     private void SetOpen(bool value)
     {
-        if (!value) FinishDrag();
+        if (!value) { FinishDrag(); if (tab == 8) levelEditor.Leave(); }
         open = value;
     }
     private void HandleDrag(Event e, float x, float y, float width, float height)
@@ -128,6 +130,7 @@ internal sealed class ModMenu
     {
         if (!developerMode.Value) nativeDebugMenu.CloseOwned();
         debugWorkspace.Tick(developerMode.Value && enabled.Value && !broken && open && tab == 7);
+        levelEditor.Tick(developerMode.Value && enabled.Value && !broken && open && tab == 8);
         if (!enabled.Value || broken) return;
         if (!inputChecked) { inputChecked = true; ResolveInput(); }
         if (poll == null) return;
@@ -187,13 +190,19 @@ internal sealed class ModMenu
             var visibleTabs = new List<int>();
             for (int i = 0; i < Tabs.Length; i++)
                 if (MenuModuleVisibility.IsTabVisible(Tabs[i], developerMode.Value, houseRulesEnabled)) visibleTabs.Add(i);
+            if (tab == 8 && !visibleTabs.Contains(tab)) levelEditor.Leave();
             if (!visibleTabs.Contains(tab)) tab = 4; // Mods, where developer mode can be restored.
             float tabWidth = (width - 24) / visibleTabs.Count;
             for (int column = 0; column < visibleTabs.Count; column++)
             {
                 int i = visibleTabs[column];
+                string title = i == 8 && width < 700 ? "Editor" : Tabs[i];
                 if (GUI.Button(new Rect(x + 12 + column * tabWidth, y + 58, tabWidth - 3, 28),
-                    (tab == i ? "[" + Tabs[i] + "]" : Tabs[i]))) tab = i;
+                    (tab == i ? "[" + title + "]" : title)))
+                {
+                    if (tab == 8 && i != 8) levelEditor.Leave();
+                    tab = i;
+                }
             }
 
             void Label(float top, string value) => GUI.Label(new Rect(x + 15, y + top, width - 30, 25), value);
@@ -328,6 +337,12 @@ internal sealed class ModMenu
                 return;
             }
 
+            if (tab == 8)
+            {
+                if (developerMode.Value) levelEditor.Draw(x, y, width, height);
+                return;
+            }
+
             var modules = new List<MenuModule>();
             foreach (var m in plugin.MenuModules)
                 if (MenuModuleVisibility.IsVisible(m.Id, developerMode.Value)) modules.Add(m);
@@ -358,7 +373,7 @@ internal sealed class ModMenu
                     if (!developerMode.Value) nativeDebugMenu.CloseOwned();
                     page = 0;
                     config.Save();
-                    message = developerMode.Value ? "Development modules, Reports and Dev Tools visible." : "Development modules, Reports and Dev Tools hidden.";
+                    message = developerMode.Value ? "Development modules, Reports, Dev Tools and Level Editor visible." : "Development modules, Reports, Dev Tools and Level Editor hidden.";
                 }
                 catch (Exception ex)
                 {

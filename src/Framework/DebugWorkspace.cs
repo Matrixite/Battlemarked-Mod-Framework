@@ -172,7 +172,7 @@ internal sealed class DebugWorkspace
     }
 
     private static Type Load(string assembly, string type) => Assembly.Load(new AssemblyName(assembly)).GetType(type, true);
-    private static object Call(object target, string method)
+    internal static object Call(object target, string method)
     {
         if (target == null) throw new InvalidOperationException("Missing native object.");
         var m = target.GetType().GetMethod(method, BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);

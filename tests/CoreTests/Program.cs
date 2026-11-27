@@ -40,6 +40,7 @@ foreach (bool houseRulesEnabled in new[] { false, true })
     foreach (string name in new[] { "Overview", "Mods", "Updates" })
         Check(MenuModuleVisibility.IsTabVisible(name, developerMode, houseRulesEnabled), "regular tab always visible: " + name);
     Check(MenuModuleVisibility.IsTabVisible("Reports", developerMode, houseRulesEnabled) == developerMode, "reports follows developer mode");
+    Check(MenuModuleVisibility.IsTabVisible("Level Editor", developerMode, houseRulesEnabled) == developerMode, "level editor follows developer mode");
     Check(MenuModuleVisibility.IsTabVisible("Dev Tools", developerMode, houseRulesEnabled) == developerMode, "dev tools follows developer mode");
     Check(MenuModuleVisibility.IsTabVisible("AP rules", developerMode, houseRulesEnabled) == houseRulesEnabled, "AP follows house-rules enabled preference");
     Check(MenuModuleVisibility.IsTabVisible("Health", developerMode, houseRulesEnabled) == houseRulesEnabled, "health follows house-rules enabled preference");

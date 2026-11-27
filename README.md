@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.19-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.20-alpha
 
 ## First stable release automation
 
@@ -8,9 +8,17 @@ The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates th
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
 
+## v0.6.20 — experimental runtime Level Editor
+
+Open **F10 > Mods**, ensure House rules is enabled and running, and turn **Developer mode ON before starting a new disposable local solo campaign**. In a loaded level, open **Level Editor** (labelled **Editor** on a smaller display) and click **Refresh board & enemies**. The map is a paged 8×8 window of the live board model: `.` free, `#` blocked, `P` occupied, `-` missing, `*` selected. Use X-/X+/Y-/Y+ to move the window; select a tile to inspect its coordinates, height, flags and occupancy.
+
+The enemy list contains eligible loaded, registered, non-player-controlled 1×1 hostile creatures with AI, classified by the current game spawner's registry and native piece qualities. Search by name or ID, select a free tile and enemy, then **Place selected enemy > Confirm enemy spawn**. The request runs once on Update, rechecks the current local solo HUD/room, tile and definition, and uses the game's normal RequestSpawnPiece pipeline; a submitted request is not proof of a successful spawn. Check the game and refresh again. No action runs automatically, and multiplayer/unverified scope is rejected.
+
+This is a runtime inspection and placement prototype, not the original Unity level authoring tool. No terrain editing, deleting pieces, entrance/exit editing, map saving/export/import, or custom-level creation is implemented. Do not use on valued campaigns; back up saves. If the enemy registry was not captured, start another new solo campaign with developer mode already on. Native binding errors are reported in the editor/BepInEx log. Windows installation and in-game acceptance remain pending.
+
 ## v0.6.19 — fix debug guard build error
 
-The captured v0.6.18 build report identifies three CS0176 errors in HouseRules.cs: the new card-grant guard accessed the shared static session model through an instance. All three references now use `HouseRules.model` explicitly, with a separately named captured-model snapshot and the same final identity check. The native read/write guards and other Dev Tools behavior are unchanged. The installer retains detailed build logging. Windows rebuild and gameplay acceptance are still required.
+The captured v0.6.18 build report identifies three CS0176 errors in HouseRules.cs: the new card-grant guard accessed the shared static session model through an instance. All three references now use `HouseRules.model` explicitly, with a separately named captured-model snapshot and the same final identity check. The native read/write guards and other Dev Tools behavior are unchanged. The installer retains detailed build logging. The user confirmed v0.6.19 installs successfully; card-grant gameplay acceptance is still required.
 
 ## v0.6.18 — installer build diagnostics
 
@@ -34,7 +42,7 @@ F10 > Mods > Developer mode ON > Dev Tools opens a new independent inspector, wi
 - **Events:** observed core/gameplay method-call totals for running diagnostic modules.
 - **Native:** the original guarded launcher, retained for compatibility.
 
-Browsing is read-only and not a complete asset catalogue. Snapshots are capped at 4,096 inspected objects, can contain inactive/preview objects, and are cleared on scene change or leaving Dev Tools. Card grants require the verified game build, House rules running, Developer mode enabled **before a local campaign is created** (for registry capture), an active local hero, a current HUD-backed native room with exactly one connected local player/host, matching game-state registry, unchanged selection IDs and an idle request queue. The framework sends the normal native card request, not a direct inventory write; submission does not guarantee delivery. Use only disposable local solo sessions with save backups. Unavailable bindings or unproven scope fail closed. No spawning or level editing yet. This alpha has not been compiled against the installed Windows interop files or tested in a live game.
+Browsing is read-only and not a complete asset catalogue. Snapshots are capped at 4,096 inspected objects, can contain inactive/preview objects, and are cleared on scene change or leaving Dev Tools. Card grants require the verified game build, House rules running, Developer mode enabled **before a local campaign is created** (for registry capture), an active local hero, a current HUD-backed native room with exactly one connected local player/host, matching game-state registry, unchanged selection IDs and an idle request queue. The framework sends the normal native card request, not a direct inventory write; submission does not guarantee delivery. Use only disposable local solo sessions with save backups. Unavailable bindings or unproven scope fail closed. At v0.6.16 no spawning or level editing was available (see v0.6.20 above). This alpha has not been compiled against the installed Windows interop files or tested in a live game.
 
 ## v0.6.15 — native debug menu retail-build detection
 

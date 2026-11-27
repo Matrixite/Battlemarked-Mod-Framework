@@ -6,6 +6,7 @@ internal static class MenuModuleVisibility
     internal static bool IsTabVisible(string title, bool developerMode, bool houseRulesEnabled)
     {
         if (title == "Reports" || title == "Dev Tools") return developerMode;
+        if (title == "Level Editor") return developerMode;
         if (title == "AP rules" || title == "Health" || title == "Presets") return houseRulesEnabled;
         return true;
     }

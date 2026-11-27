@@ -44,6 +44,8 @@ internal sealed class HouseRules : BattlemarkedModule
     // Keep a bounded set of captures, keyed by the native GameState identity.
     private readonly Dictionary<IntPtr, (Il2CppObjectBase State, object Registry)> debugCardRegistries = new();
     private bool debugRegistryCaptureError;
+    private readonly Dictionary<IntPtr, (Il2CppObjectBase State, object Spawner)> debugSpawnContexts = new();
+    private bool debugSpawnCaptureError;
     private bool modelFromHud;
     private int ignoredGetterCaptures;
     private string roomHook = "not attempted", lastFlags = "not observed", lastRejectedFlags = "not observed";
@@ -357,6 +359,16 @@ internal sealed class HouseRules : BattlemarkedModule
                 ctx.Patches.Patch(constructor, postfix: Hook(nameof(CaptureDebugCardRegistry)));
             }
             catch (Exception ex) { ctx.Log.LogWarning("Optional debug card registry capture: " + ex.Message); }
+            // Capture the authoritative spawn handler without altering its behavior.
+            try
+            {
+                var handler = logic.GetType("Jade.GameLogic.RequestHandlerSpawnPiece", true);
+                var spawner = logic.GetType("Jade.GameLogic.PieceSpawner", true);
+                var constructor = handler.GetConstructor(new[] { spawner });
+                if (constructor == null) throw new InvalidOperationException("Spawn handler constructor unavailable.");
+                ctx.Patches.Patch(constructor, postfix: Hook(nameof(CaptureDebugSpawnContext)));
+            }
+            catch (Exception ex) { ctx.Log.LogWarning("Optional level editor spawn capture: " + ex.Message); }
             // The supplied interop report has separate native start and join
             // entry points. Keep this independent of the working AP hooks.
             try
@@ -666,6 +678,69 @@ internal sealed class HouseRules : BattlemarkedModule
                 r.ctx.Log.LogWarning("Debug card registry capture failed: " + ex.GetBaseException().Message);
             r.debugRegistryCaptureError = true;
         }
+    }
+
+    private static void CaptureDebugSpawnContext(object __instance)
+    {
+        var r = running;
+        if (r == null || r.faulted || Plugin.Instance?.DeveloperModeEnabled != true ||
+            Environment.CurrentManagedThreadId != r.mainThread) return;
+        try
+        {
+            var spawner = DebugWorkspace.ReadMember(__instance, "pieceSpawner");
+            var state = DebugWorkspace.ReadMember(spawner, "gameState") as Il2CppObjectBase;
+            if (state == null || state.Pointer == IntPtr.Zero) return;
+            if (r.debugSpawnContexts.Count >= 8 && !r.debugSpawnContexts.ContainsKey(state.Pointer))
+                r.debugSpawnContexts.Clear();
+            r.debugSpawnContexts[state.Pointer] = (state, spawner);
+        }
+        catch (Exception ex)
+        {
+            if (!r.debugSpawnCaptureError)
+                r.ctx.Log.LogWarning("Level editor spawn capture failed: " + ex.GetBaseException().Message);
+            r.debugSpawnCaptureError = true;
+        }
+    }
+
+    internal static bool TryGetLevelEditorContext(out LevelEditor.Context context, out string reason)
+    {
+        context = null;
+        reason = "Start a local solo campaign with House rules and Developer mode enabled.";
+        var r = running;
+        if (r == null || r.faulted || Plugin.Instance?.DeveloperModeEnabled != true ||
+            Plugin.Instance?.VerifiedGame != true || Environment.CurrentManagedThreadId != r.mainThread ||
+            !r.modelFromHud || HouseRules.model == null) return false;
+        try
+        {
+            var scene = SceneManager.GetActiveScene();
+            if (!scene.IsValid() || !scene.isLoaded || !SessionModelGuard.RetainCapture(r.capturedSceneHandle, scene.handle))
+                return false;
+            var capturedModel = HouseRules.model;
+            var key = r.modelKey;
+            bool? s = ReadFlag(r.solo, capturedModel), l = ReadFlag(r.local, capturedModel), mp = ReadFlag(r.multi, capturedModel);
+            bool? g = ReadFlag(r.inGame, capturedModel), p = ReadFlag(r.playing, capturedModel), h = ReadFlag(r.host, capturedModel);
+            if (!r.TryGetLocalRoom(capturedModel, out var room, out reason)) return false;
+            reason = SessionModelGuard.SessionRejection(s, l, mp, g, p, h, true);
+            if (reason != null) return false;
+            var state = DebugWorkspace.ReadMember(capturedModel, "gameState") as Il2CppObjectBase;
+            var board = DebugWorkspace.ReadMember(state, "board") as Il2CppObjectBase;
+            if (state == null || state.Pointer == IntPtr.Zero || board == null || board.Pointer == IntPtr.Zero ||
+                board.GetType().FullName != "Jade.GameModel.Board" ||
+                board.GetType().GetMethod("get_IsLoaded", Type.EmptyTypes)?.Invoke(board, null) is not bool loaded || !loaded)
+            { reason = "Board not loaded."; return false; }
+            var tileSet = DebugWorkspace.ReadMember(board, "tileSet") as Il2CppObjectBase;
+            if (tileSet == null || tileSet.Pointer == IntPtr.Zero || room is not Il2CppObjectBase nativeRoom || nativeRoom.Pointer == IntPtr.Zero)
+            { reason = "Tile set or native room identity unavailable."; return false; }
+            object spawner = null;
+            if (r.debugSpawnContexts.TryGetValue(state.Pointer, out var capture)) spawner = capture.Spawner;
+            if (!ReferenceEquals(HouseRules.model, capturedModel) || !ReferenceEquals(running, r) ||
+                key == IntPtr.Zero || r.modelKey != key || SceneManager.GetActiveScene().handle != scene.handle)
+            { reason = "Session changed."; return false; }
+            context = new LevelEditor.Context(scene.handle, key, state, board, tileSet, room, spawner);
+            reason = "Verified local solo board.";
+            return true;
+        }
+        catch (Exception ex) { context = null; reason = ex.GetBaseException().Message; return false; }
     }
 
     // A debug command must resolve the current authoritative piece, not trust
@@ -1034,7 +1109,7 @@ internal sealed class HouseRules : BattlemarkedModule
     public override void OnSceneChanged(SceneInfo info) => SyncScene(info.Handle, info.Name);
     public override void OnUpdate()
     {
-        if (Plugin.Instance?.DeveloperModeEnabled != true) debugCardRegistries.Clear();
+        if (Plugin.Instance?.DeveloperModeEnabled != true) { debugCardRegistries.Clear(); debugSpawnContexts.Clear(); }
         ConsumeUnverifiedHealthTransition();
         if (requestedRefundMode != refundMode && (DateTime.UtcNow - lastModeCheck).TotalSeconds >= 1)
             TryApplyModeChange();
@@ -1060,5 +1135,5 @@ internal sealed class HouseRules : BattlemarkedModule
         }
         catch (Exception ex) { ctx.Log.LogWarning("House rules report: " + ex.Message); }
     }
-    public override void OnStop() { debugCardRegistries.Clear(); health?.CancelForTransition("Module stopped"); LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); health?.Write(); }
+    public override void OnStop() { debugCardRegistries.Clear(); debugSpawnContexts.Clear(); health?.CancelForTransition("Module stopped"); LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); health?.Write(); }
 }

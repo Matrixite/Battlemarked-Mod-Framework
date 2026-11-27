@@ -1,12 +1,18 @@
-# v0.6.19-alpha validation
+# v0.6.20-alpha validation
 
 ## First stable release automation
 
 The 12 Python release-gate and simulated publication tests pass locally. These cover the current alpha skip, exact stable-version eligibility, inconsistent version rejection, wrong branch refusal, mismatched tag refusal, versioned source archive and matching SHA-256 checksum, and repeated-run protection. The publication tests use a temporary local Git remote and mock GitHub CLI; they do not create a real release. The hosted workflow is configured to run the .NET 8 core tests before publication; dotnet and the Windows game environment are unavailable here. Real GitHub Actions execution and Windows/gameplay acceptance remain unverified. No framework version, gameplay behavior or updater code changes are included in this automation.
 
+## v0.6.20 runtime Level Editor
+
+Static inspection of the supplied verified GameAssembly and matching IL2CPP metadata identifies the retail `Jade.LevelEditor.LevelEditor` component, board and tile helpers, the native enemy classification/registry and the normal spawn request. The new framework-owned editor uses exact method signatures from that metadata. Its source regression tests cover developer-only visibility, current HUD-backed local-room proof, bounded tile reads, explicit confirmation, scope/tile/definition/queue revalidation before one request, and no direct spawn or level-asset mutation. All 25 Python Dev Tools and release tests pass. The .NET core test matrix was extended for tab visibility, but this runner lacks the SDK and installed Windows-generated interop assemblies. Neither compile nor native runtime behavior is verified here.
+
+Acceptance on Windows: update from the user-confirmed working v0.6.19, check v0.6.20 in F10, enable Developer mode before starting a disposable local solo campaign with House rules running, then open Level Editor. Refresh the board, pan across boundaries, select different occupied/free/missing tiles and compare coordinates/occupancy against the game. Search for a registered enemy, confirm once on a free tile, verify the game actually spawns the intended creature and refresh. Check blocked/occupied tiles, busy room, unknown build, multiplayer, closed tab, disabled developer mode and changed level/session cannot dispatch. Check AP/health/Dev Tools remain functional. No actual spawn is claimed until this test succeeds.
+
 ## v0.6.19 static model access
 
-The user's v0.6.18 Windows build-details.log reports restore success, zero warnings and exactly three CS0176 errors at HouseRules.cs lines 679, 684 and 712. The static field `HouseRules.model` was incorrectly accessed through `r.model` in the new card-grant guard. The correction explicitly accesses the static field and retains the captured-model identity test. The source regression test fails against the old three references and passes after the fix. A Windows rebuild is necessary to confirm compilation, and the existing Dev Tools runtime acceptance checks remain pending.
+The user's v0.6.18 Windows build-details.log reports restore success, zero warnings and exactly three CS0176 errors at HouseRules.cs lines 679, 684 and 712. The static field `HouseRules.model` was incorrectly accessed through `r.model` in the new card-grant guard. The correction explicitly accesses the static field and retains the captured-model identity test. The source regression test fails against the old three references and passes after the fix. The user subsequently confirmed v0.6.19 works; existing Dev Tools runtime acceptance checks remain pending.
 
 ## v0.6.18 build diagnostics
 
