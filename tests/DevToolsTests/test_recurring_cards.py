@@ -18,12 +18,24 @@ class RecurringCardsTests(unittest.TestCase):
         path = SRC / "RecurringCards.cs"
         self.assertTrue(path.exists(), "Missing recurring card implementation")
         source = path.read_text()
-        for token in ('record struct CardKey', 'PieceId', 'Owner', 'Sheet', 'InstanceId', 'TypeKey',
+        for token in ('readonly struct CardKey : IEquatable<CardKey>', 'PieceId', 'Owner', 'Sheet', 'InstanceId', 'TypeKey',
                       'HashSet<CardKey>', 'TryGetRecurringCardsContext', 'SameSession', 'TryValidateRecurringHero',
                       '"get_Hand"', '"get_Backpack"', '"TryGetCard"', 'selected.Contains(key)', '"get_IsConsumable"'):
             self.assertIn(token, source)
         self.assertIn('selected.Remove', source)
         self.assertIn('selected.Add', source)
+
+    def test_card_identity_avoids_known_interop_compiler_risks(self):
+        source = (SRC / "RecurringCards.cs").read_text()
+        self.assertNotIn('record struct CardKey', source)
+        self.assertIn('bool Equals(CardKey other)', source)
+        for field in ('PieceId', 'Owner', 'Sheet', 'InstanceId', 'TypeKey'):
+            self.assertIn('other.' + field, source)
+        self.assertIn('HashCode.Combine(PieceId, Owner, Sheet, InstanceId, TypeKey)', source)
+        self.assertNotIn('RemoveWhere(', source)
+        self.assertNotIn('FindIndex(', source)
+        self.assertNotIn('.Where(', source)
+        self.assertNotIn('yield return', source)
 
     def test_native_cooldown_is_scoped_to_one_card_coroutine(self):
         path = SRC / "RecurringCards.cs"

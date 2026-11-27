@@ -1,4 +1,8 @@
-# v0.6.33-alpha validation
+# v0.6.34-alpha validation
+
+## v0.6.34 build compatibility
+
+User reported failure to update to v0.6.33. The latest installation logs are not available; the existing log is for v0.6.18. Prior Windows CS0656 failures involved compiler-generated record and closure code with the game's interop references. The new Recurring Cards module introduced a record struct containing two string fields, captured predicates and an iterator. An explicit immutable key preserves equality and hashing across all five identifiers; bounded loops preserve the matching, inventory scan and choice pruning. The new source regression checks failed on v0.6.33 and pass after the change; all 62 Python Dev Tools/release checks pass. Actual Windows compilation and the causality of the reported update failure remain unverified. Confirm a successful v0.6.34 install and test the existing recurring-card acceptance matrix. If installation fails, retain fresh build-details.log and update-install.log.
 
 ## v0.6.33 Recurring Cards
 

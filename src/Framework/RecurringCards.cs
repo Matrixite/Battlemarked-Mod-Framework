@@ -27,7 +27,21 @@ internal static class RecurringCards
     private static CardKey? queued;
     private static string status = "Start a disposable local solo campaign.";
 
-    private readonly record struct CardKey(int PieceId, ulong Owner, string Sheet, int InstanceId, string TypeKey);
+    // The generated game interop references have previously failed Roslyn
+    // record/closure synthesis with CS0656. Keep this key explicit, including
+    // its reference-type fields, using ordinary managed value equality.
+    private readonly struct CardKey : IEquatable<CardKey>
+    {
+        internal readonly int PieceId, InstanceId;
+        internal readonly ulong Owner;
+        internal readonly string Sheet, TypeKey;
+        internal CardKey(int pieceId, ulong owner, string sheet, int instanceId, string typeKey)
+        { PieceId = pieceId; Owner = owner; Sheet = sheet; InstanceId = instanceId; TypeKey = typeKey; }
+        public bool Equals(CardKey other) => PieceId == other.PieceId && Owner == other.Owner &&
+            Sheet == other.Sheet && InstanceId == other.InstanceId && TypeKey == other.TypeKey;
+        public override bool Equals(object obj) => obj is CardKey other && Equals(other);
+        public override int GetHashCode() => HashCode.Combine(PieceId, Owner, Sheet, InstanceId, TypeKey);
+    }
     private sealed class CardRow
     {
         internal readonly CardKey Key;
@@ -108,18 +122,20 @@ internal static class RecurringCards
             // The native UseAndExecuteCard state machine allocates the
             // UpdateCardInstance enumerator directly (factory is inlined).
             // Patch its real MoveNext rather than the unused factory/getter.
-            var stateMachines = executor.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)
-                .Where(t => t.Name.Contains("UpdateCardInstance", StringComparison.Ordinal) &&
-                    t.GetMethod("MoveNext", Instance, null, Type.EmptyTypes, null)?.ReturnType == typeof(bool)).ToArray();
-            if (stateMachines.Length != 1) throw new InvalidOperationException("Native card update coroutine unavailable.");
+            var stateMachines = new List<Type>();
+            foreach (var t in executor.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))
+                if (t.Name.Contains("UpdateCardInstance", StringComparison.Ordinal) &&
+                    t.GetMethod("MoveNext", Instance, null, Type.EmptyTypes, null)?.ReturnType == typeof(bool)) stateMachines.Add(t);
+            if (stateMachines.Count != 1) throw new InvalidOperationException("Native card update coroutine unavailable.");
             var machine = stateMachines[0];
             definitionMember = Member(machine, "definition", definitionType, true);
             _ = Member(machine, "sourcePiece", pieceType);
             _ = Member(machine, "cardInstanceId", typeof(int));
             _ = Member(machine, "cardTypeId", cardIdType);
-            var execMembers = machine.GetMembers(Instance).Where(m => (m is FieldInfo || m is PropertyInfo) &&
-                MemberType(m) == executor).ToArray();
-            if (execMembers.Length != 1) throw new InvalidOperationException("Native card executor reference unavailable.");
+            var execMembers = new List<MemberInfo>();
+            foreach (var m in machine.GetMembers(Instance))
+                if ((m is FieldInfo || m is PropertyInfo) && MemberType(m) == executor) execMembers.Add(m);
+            if (execMembers.Count != 1) throw new InvalidOperationException("Native card executor reference unavailable.");
             executorMember = execMembers[0];
             tryGetPiece = Exact(Model("BoardHelpers"), "TryGetPiece", true, typeof(bool), Model("Board"), Model("PieceId"), pieceType.MakeByRefType());
             tryGetCard = Exact(Model("CardInventory"), "TryGetCard", false, typeof(bool), typeof(int), cardStateType.MakeByRefType());
@@ -173,12 +189,14 @@ internal static class RecurringCards
         dead.Invoke(null, new[] { piece }) is bool isDead && !isDead &&
         HouseRules.TryValidateRecurringHero(live, piece, out _);
 
-    private static IEnumerable<object> ListItems(object list, int max, Type element)
+    private static List<object> ListItems(object list, int max, Type element)
     {
         if (list == null || Call(list, "get_Count") is not int count || count < 0 || count > max)
             throw new InvalidOperationException("Native list missing or beyond safe scan bound.");
         var item = Exact(list.GetType(), "get_Item", false, element, typeof(int));
-        for (int i = 0; i < count; i++) yield return item.Invoke(list, new object[] { i });
+        var items = new List<object>(count);
+        for (int i = 0; i < count; i++) items.Add(item.Invoke(list, new object[] { i }));
+        return items;
     }
     private static List<HeroRow> Scan(LevelEditor.Context live)
     {
@@ -221,8 +239,10 @@ internal static class RecurringCards
             bool sameView = viewContext != null && viewContext.SameSession(live);
             SyncSession(live);
             var current = Scan(live);
-            var keys = current.SelectMany(h => h.Cards).Select(c => c.Key).ToHashSet();
-            selected.RemoveWhere(k => !keys.Contains(k));
+            var keys = new HashSet<CardKey>();
+            foreach (var h in current)
+                foreach (var c in h.Cards) keys.Add(c.Key);
+            selected.IntersectWith(keys);
             status = null;
             if (choice.HasValue)
             {
@@ -234,7 +254,9 @@ internal static class RecurringCards
             status ??= selected.Count + " selected card(s) | Recurs with one turn of cooldown.";
             int previousHero = heroIndex >= 0 && heroIndex < heroes.Count ? heroes[heroIndex].Id : -1;
             heroes.Clear(); heroes.AddRange(current); viewContext = live;
-            int index = heroes.FindIndex(h => h.Id == previousHero);
+            int index = -1;
+            for (int i = 0; i < heroes.Count; i++)
+                if (heroes[i].Id == previousHero) { index = i; break; }
             heroIndex = index >= 0 ? index : Math.Clamp(heroIndex, 0, Math.Max(0, heroes.Count - 1));
         }
         catch (Exception ex)
