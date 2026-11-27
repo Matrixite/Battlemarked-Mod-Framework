@@ -1,8 +1,12 @@
-# v0.6.18-alpha validation
+# v0.6.19-alpha validation
 
 ## First stable release automation
 
 The 12 Python release-gate and simulated publication tests pass locally. These cover the current alpha skip, exact stable-version eligibility, inconsistent version rejection, wrong branch refusal, mismatched tag refusal, versioned source archive and matching SHA-256 checksum, and repeated-run protection. The publication tests use a temporary local Git remote and mock GitHub CLI; they do not create a real release. The hosted workflow is configured to run the .NET 8 core tests before publication; dotnet and the Windows game environment are unavailable here. Real GitHub Actions execution and Windows/gameplay acceptance remain unverified. No framework version, gameplay behavior or updater code changes are included in this automation.
+
+## v0.6.19 static model access
+
+The user's v0.6.18 Windows build-details.log reports restore success, zero warnings and exactly three CS0176 errors at HouseRules.cs lines 679, 684 and 712. The static field `HouseRules.model` was incorrectly accessed through `r.model` in the new card-grant guard. The correction explicitly accesses the static field and retains the captured-model identity test. The source regression test fails against the old three references and passes after the fix. A Windows rebuild is necessary to confirm compilation, and the existing Dev Tools runtime acceptance checks remain pending.
 
 ## v0.6.18 build diagnostics
 

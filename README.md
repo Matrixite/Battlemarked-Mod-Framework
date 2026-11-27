@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.18-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.19-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,10 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.19 — fix debug guard build error
+
+The captured v0.6.18 build report identifies three CS0176 errors in HouseRules.cs: the new card-grant guard accessed the shared static session model through an instance. All three references now use `HouseRules.model` explicitly, with a separately named captured-model snapshot and the same final identity check. The native read/write guards and other Dev Tools behavior are unchanged. The installer retains detailed build logging. Windows rebuild and gameplay acceptance are still required.
 
 ## v0.6.18 — installer build diagnostics
 

@@ -27,5 +27,14 @@ class InteropCompilerCompatibilityTests(unittest.TestCase):
                     found.append(f"{source.relative_to(ROOT)}: {match.group().strip()}")
         self.assertEqual(found, [], "Record classes can trigger CS0656 in the game's interop reference set.")
 
+    def test_static_session_model_is_not_accessed_via_instance(self):
+        # The 0.6.18 Windows compiler emitted CS0176 at all three
+        # r.model references in the debug card guard.
+        rules = (ROOT / "src" / "Framework" / "HouseRules.cs").read_text()
+        self.assertRegex(rules, r"private\s+static\s+object\s+model\s*;")
+        guard = rules[rules.index("internal static bool TryGetDebugRoomForPieceId"):rules.index("private int Allowance")]
+        self.assertNotRegex(guard, r"\br\.model\b")
+        self.assertIn("HouseRules.model", guard)
+
 if __name__ == "__main__":
     unittest.main()

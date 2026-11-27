@@ -676,13 +676,13 @@ internal sealed class HouseRules : BattlemarkedModule
         reason = "Verified local session unavailable (House rules must be running).";
         var r = running;
         if (r == null || r.faulted || Plugin.Instance?.DeveloperModeEnabled != true || pieceId == null || cardId == null || definition == null ||
-            Environment.CurrentManagedThreadId != r.mainThread || !r.modelFromHud || r.model == null ||
+            Environment.CurrentManagedThreadId != r.mainThread || !r.modelFromHud || HouseRules.model == null ||
             !SessionModelGuard.RetainCapture(r.capturedSceneHandle, SceneManager.GetActiveScene().handle))
             return false;
         try
         {
-            var model = r.model;
-            var state = DebugWorkspace.ReadMember(model, "gameState") as Il2CppObjectBase;
+            var capturedModel = HouseRules.model;
+            var state = DebugWorkspace.ReadMember(capturedModel, "gameState") as Il2CppObjectBase;
             if (state == null || state.Pointer == IntPtr.Zero ||
                 !r.debugCardRegistries.TryGetValue(state.Pointer, out var capture))
             { reason = "No matching game request registry captured yet."; return false; }
@@ -708,8 +708,8 @@ internal sealed class HouseRules : BattlemarkedModule
                 lookup.Invoke(capture.Registry, new[] { cardId }) is not UnityEngine.Object registered ||
                 registered == null || registered != definition)
             { reason = "Selected card is not registered in the current game."; return false; }
-            if (!r.TryGetLocalRoom(model, out room, out reason)) return false;
-            if (!ReferenceEquals(r.model, model) || !ReferenceEquals(running, r))
+            if (!r.TryGetLocalRoom(capturedModel, out room, out reason)) return false;
+            if (!ReferenceEquals(HouseRules.model, capturedModel) || !ReferenceEquals(running, r))
             { room = null; reason = "Session model changed."; return false; }
             return true;
         }
