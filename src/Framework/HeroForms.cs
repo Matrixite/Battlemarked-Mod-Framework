@@ -181,6 +181,42 @@ internal static class HeroForms
             throw new InvalidOperationException("Wait until this hero's turn.");
     }
 
+    // The native size helper understands square monsters and rotated
+    // rectangular creatures. Do not infer footprint from the asset name.
+    internal static object FormFootprint(UObject definition, float orientation)
+    {
+        var size = Call(definition, "get_PieceSize");
+        if (size == null || !size.GetType().IsEnum || size.GetType().FullName != "Jade.SharedEnums.PieceSize" ||
+            !float.IsFinite(orientation))
+            throw new InvalidOperationException("Native form footprint unavailable.");
+        var footprint = Exact(Model("PieceSizeHelper"), "PieceSizeToTileSize", true, Model("IntPoint2D"),
+            size.GetType(), typeof(float)).Invoke(null, new[] { size, (object)orientation });
+        // Verified game size enum: Tiny/Small/Medium 1x1, Large 2x2,
+        // Huge 3x3, Gargantuan 4x4, and TwoByOne 2x1 or 1x2.
+        if ((int)Get(footprint, "x") is < 1 or > 4 || (int)Get(footprint, "y") is < 1 or > 4)
+            throw new InvalidOperationException("Unsupported native form footprint.");
+        return footprint;
+    }
+
+    internal static void ValidateFormFit(object board, object piece, UObject definition)
+    {
+        // TransformIntoNewPiece captures the original piece's TileRect center
+        // and orientation before despawn. Native spawn placement constructs
+        // TileRect(desiredPosition, orientedSize) from these exact values.
+        var point = Model("IntPoint2D");
+        var rect = Model("TileRect");
+        var center = Exact(Model("Piece"), "get_Center", false, point).Invoke(piece, null);
+        var footprint = FormFootprint(definition, (float)Get(piece, "orientation"));
+        var area = rect.GetConstructor(new[] { point, point })?.Invoke(new[] { center, footprint });
+        if (area == null) throw new InvalidOperationException("Native form tile rectangle unavailable.");
+        // Check every tile through the same native spawn-area helper, excluding
+        // only the hero that the transformation is about to replace.
+        if (Exact(Model("BoardHelpers"), "CanSpawnPieceInArea", true, typeof(bool), Model("Board"), rect, Model("PieceId"))
+            .Invoke(null, new[] { board, area, Get(piece, "pieceId") }) is not bool fits || !fits)
+            throw new InvalidOperationException("No room for " + Get(footprint, "x") + "x" + Get(footprint, "y") +
+                " form; move your hero to an open area.");
+    }
+
     internal static bool Waiting
     {
         get
@@ -203,6 +239,7 @@ internal static class HeroForms
             !HouseRules.TryValidateLocalHero(live, piece, out reason))
             throw new InvalidOperationException("Hero form rejected: " + reason);
         ValidatePiece(live.State, live.Board, piece);
+        ValidateFormFit(live.Board, piece, definition);
         if (Call(live.Room, "get_HasRequestsInQueue") is not bool busy || busy)
             throw new InvalidOperationException("Local request queue busy.");
         var command = new Command { Context = live, Token = "bmf-hero-form-" + Guid.NewGuid().ToString("N"),
@@ -260,6 +297,7 @@ internal static class HeroForms
                 .Invoke(registry, new[] { id }) as UObject;
             if (registered == null || registered != command.Definition || Key(id) != command.Destination)
                 throw new InvalidOperationException("Native form definition changed.");
+            ValidateFormFit(board, piece, registered);
             // Keep owner, Players team and real sheet. Native transformation
             // manages despawn, turn queue, form record, card/trait rules and events.
             __result = transform.Invoke(helper, new[] { piece, id, Get(piece, "ownerId"), Get(piece, "team"),

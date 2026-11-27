@@ -396,24 +396,20 @@ internal sealed class LevelEditor
         return team != null && team.ToString() == "EnemyOfPlayers";
     }
 
-    private static bool ValidateFormDefinition(Context context, UObject config, UObject definition, out object id, out string key)
+    private static bool ValidateFormDefinition(Context context, UObject config, UObject definition, out object id, out string key, out string formSize)
     {
-        id = null; key = null;
+        id = null; key = formSize = null;
         if (context.Registry == null || config == null || definition == null) return false;
         var defType = Load("GameDefinitions", "Jade.GameDefinitions.PieceDefinition");
         var idType = ModelType("PieceTypeId");
-        var pointType = ModelType("IntPoint2D");
         if (!defType.IsInstanceOfType(definition)) return false;
         id = Call(definition, "get_PieceTypeId");
         if (!idType.IsInstanceOfType(id) || Call(id, "get_Id") is not string name || string.IsNullOrWhiteSpace(name) ||
             Call(id, "get_Guid") is not string guid || string.IsNullOrWhiteSpace(guid)) return false;
         key = name + " | " + guid;
         if (Call(definition, "get_Hp") is not int hp || hp <= 0) return false;
-        var size = Call(definition, "get_PieceSize");
-        if (size == null || !size.GetType().IsEnum || size.GetType().FullName != "Jade.SharedEnums.PieceSize") return false;
-        var footprint = Require(ModelType("PieceSizeHelper"), "PieceSizeToTileSize", true, pointType,
-            size.GetType(), typeof(float)).Invoke(null, new[] { size, (object)0f });
-        if ((int)Get(footprint, "x") != 1 || (int)Get(footprint, "y") != 1) return false;
+        var footprint = HeroForms.FormFootprint(definition, 0f);
+        formSize = Get(footprint, "x") + "x" + Get(footprint, "y");
         if (Require(context.Registry.GetType(), "GetPieceDefinition", false, defType, idType)
             .Invoke(context.Registry, new[] { id }) is not UObject registered || registered == null || registered != definition) return false;
         var qualitiesType = Load("GameDefinitions", "Jade.GameDefinitions.PieceQualities");
@@ -455,8 +451,8 @@ internal sealed class LevelEditor
                     var def = cast.Invoke(obj, null) as UObject;
                     if (!showForms && ValidateEnemy(context, config, def, out _, out _, out string key) && seen.Add(key))
                         enemies.Add(new Enemy(def, def.name ?? key, key));
-                    if (showForms && plugin.HeroFormsEnabled && ValidateFormDefinition(context, config, def, out _, out string formKey) && seenForms.Add(formKey))
-                        forms.Add(new Enemy(def, def.name ?? formKey, formKey));
+                    if (showForms && plugin.HeroFormsEnabled && ValidateFormDefinition(context, config, def, out _, out string formKey, out string formSize) && seenForms.Add(formKey))
+                        forms.Add(new Enemy(def, (def.name ?? formKey) + " [" + formSize + "]", formKey));
                 }
                 catch (Exception ex)
                 {
@@ -680,6 +676,8 @@ internal sealed class LevelEditor
             else if (mapMode == 3)
             {
                 heroTarget = ValidateHeroTarget(live, reader, tile);
+                if (selectedEnemy == null) throw new InvalidOperationException("Select a creature form first.");
+                HeroForms.ValidateFormFit(live.Board, heroTarget.Piece, selectedEnemy.Definition);
                 selectedTile = tile;
                 status = "Selected " + heroTarget.TypeKey + ". Confirm hero form.";
             }
@@ -736,7 +734,7 @@ internal sealed class LevelEditor
             if (!heroTarget.SamePiece(hero)) throw new InvalidOperationException("Hero moved or changed; select again.");
             if (!HouseRules.TryGetHeroFormsPicker(live, out var handler, out var reason)) throw new InvalidOperationException(reason);
             RequireMapIdle(handler);
-            if (!ValidateFormDefinition(live, ResolveConfig(live), command.Enemy.Definition, out var id, out var key) || key != command.Enemy.Key)
+            if (!ValidateFormDefinition(live, ResolveConfig(live), command.Enemy.Definition, out var id, out var key, out _) || key != command.Enemy.Key)
                 throw new InvalidOperationException("Creature definition no longer registered.");
             status = HeroForms.Queue(live, hero.Piece, command.Enemy.Definition, id);
         }
@@ -1113,9 +1111,9 @@ internal sealed class LevelEditor
             if (GUI.Button(new Rect(x + 15, y + footer - 25, 65, 24), "<")) enemyPage = Math.Max(0, enemyPage - 1);
             GUI.Label(new Rect(x + 84, y + footer - 25, inner - 140, 23), (enemyPage + 1) + "/" + pages + " | " + matches.Count + " forms");
             if (GUI.Button(new Rect(x + 15 + inner - 65, y + footer - 25, 65, 24), ">")) enemyPage = Math.Min(pages - 1, enemyPage + 1);
-            Label(footer, "Hero form: " + (selectedEnemy?.Name ?? "select registered 1x1 creature from list"));
+            Label(footer, "Hero form: " + (selectedEnemy?.Name ?? "select registered creature or boss from list"));
             Label(footer + 24, "Select a form, press Transform hero, then middle-click your current hero.");
-            Label(footer + 48, "Native transformation rules may change cards and stats.");
+            Label(footer + 48, "Large forms need open space. Native rules may change cards and stats.");
             Label(height - 27, status);
         }
         catch (Exception ex)

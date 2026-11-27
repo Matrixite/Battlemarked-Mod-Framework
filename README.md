@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.28-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.29-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,10 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.29 — larger Hero Forms and bosses
+
+In **F10 > Hero Forms**, press **Refresh forms**. Eligible registered creatures of all native sizes now appear, including larger monsters and bosses, with their tile dimensions beside their names. The game's native footprint helper supports 1×1, 2×1 (rotatable), 2×2, 3×3 and 4×4 creatures. Choose a form, press **Transform hero**, middle-click your current locally owned hero and confirm. Move that hero into open space before transforming into a large form; the full oriented rectangle must be available, excluding only the hero being replaced. The picker, dispatch guard and authoritative handler check the footprint before any native transform. The ordinary Level Editor spawn/move limits, Hero Forms toggle, local solo scope and no-nested-transform guard are unchanged. Special scripted bosses may not behave as ordinary player-controlled heroes; gameplay testing is required.
 
 ## v0.6.28 — move enemies directly on the map
 

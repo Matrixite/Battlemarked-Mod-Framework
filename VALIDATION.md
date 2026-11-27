@@ -1,4 +1,10 @@
-# v0.6.28-alpha validation
+# v0.6.29-alpha validation
+
+## v0.6.29 large Hero Forms
+
+Three new source regression tests fail against v0.6.28 and pass with native footprint-aware catalog/size labels, selection/dispatch/authoritative fit validation, and the clear no-room message; the ordinary enemy placement restriction is unchanged. Supplied game metadata and native instructions confirm PieceSizeToTileSize, TileRect(IntPoint2D, IntPoint2D), the original piece's center/orientation in TransformIntoNewPiece, and CanSpawnPieceInArea's per-tile existence/walkability/occupant validation with an excluded piece ID. All 49 Python Dev Tools and release checks pass locally. Windows compilation and game acceptance are not verified in this environment (no dotnet or game SDK).
+
+Windows acceptance: refresh Hero Forms in a disposable local solo campaign; find a large creature/boss with its size label; move the current hero into an open area, select/confirm the form, and verify its rendered footprint, controls, cards, turn order, and death/revert. Verify a blocked tile, insufficient board space, nearby other piece, changed session, or disabled Hero Forms prevents dispatch. Repeat a small form and ensure ordinary placement remains limited to 1×1 enemies. Special scripted creatures may need subsequent fixes.
 
 ## v0.6.28 enemy relocation
 

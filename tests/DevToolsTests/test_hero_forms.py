@@ -101,3 +101,34 @@ class HeroFormTests(unittest.TestCase):
         update = rules[rules.index('public override void OnUpdate()'):rules.index('private void Write()')]
         self.assertIn('if (Plugin.Instance?.HeroFormsEnabled != true) HeroForms.Cancel();', update)
         self.assertIn('if (Plugin.Instance?.DeveloperModeEnabled != true && Plugin.Instance?.HeroFormsEnabled != true) debugBoardHandler = null;', update)
+
+    def test_catalog_includes_large_boss_footprints(self):
+        editor = (SRC / "LevelEditor.cs").read_text()
+        forms = editor[editor.index('private static bool ValidateFormDefinition'):editor.index('internal static MethodInfo FindCast')]
+        self.assertIn('HeroForms.FormFootprint', forms)
+        self.assertNotIn('!= 1', forms)
+        scan = editor[editor.index('private void ScanEnemies'):editor.index('private static int CompareEnemies')]
+        self.assertIn('formSize', scan)
+        self.assertIn('formSize + "]"', scan)
+        # The ordinary enemy placement list must retain its existing limit.
+        enemy = editor[editor.index('private static bool ValidateEnemy'):editor.index('private static bool ValidateFormDefinition')]
+        self.assertIn('(int)Get(footprint, "x") != 1', enemy)
+
+    def test_large_form_fit_checked_at_picker_queue_and_native_handler(self):
+        editor = (SRC / "LevelEditor.cs").read_text()
+        source = (SRC / "HeroForms.cs").read_text()
+        picker = editor[editor.index('private void PickMapTile'):editor.index('private static RemovalTarget ValidateHeroTarget')]
+        self.assertIn('HeroForms.ValidateFormFit', picker)
+        queue = source[source.index('internal static string Queue('):source.index('private static bool HandleCommand')]
+        self.assertLess(queue.index('ValidateFormFit'), queue.index('send.Invoke'))
+        handler = source[source.index('private static bool HandleCommand'):]
+        self.assertLess(handler.index('ValidateFormFit'), handler.index('transform.Invoke'))
+        for token in ('PieceSizeToTileSize', 'get_Center', '"orientation"', 'CanSpawnPieceInArea', 'TileRect', '"pieceId"'):
+            self.assertIn(token, source)
+
+    def test_fit_uses_native_size_and_clearly_rejects_blocked_footprint(self):
+        source = (SRC / "HeroForms.cs").read_text()
+        self.assertIn('internal static object FormFootprint', source)
+        self.assertIn('internal static void ValidateFormFit', source)
+        self.assertIn('No room for', source)
+        self.assertIn('move your hero to an open area', source)
