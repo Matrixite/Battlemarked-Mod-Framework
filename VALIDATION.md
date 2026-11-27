@@ -1,4 +1,12 @@
-# v0.6.35-alpha validation
+# v0.6.36-alpha validation
+
+## v0.6.36 Hero Forms level carry-over
+
+Verified supplied IL2CPP metadata and native GameAssembly disassembly: EndOfScenarioStepStateProcessor's EndCurrentScenarioStepAndMoveToNext and CompleteScenario state machines first yield ForceRevertValidTransformations; the native revert path enumerates pieces and uses the original record in GameState.transformedPieces. ViewEventScenarioStepLoaded supplies the destination campaign, scenario and step identifiers. BMF captures only confirmed locally owned enemy replacements with matching original records at the native success transition, lets the native cleanup finish, and waits for the next verified local idle playable board and matching load event. Matching uses session, owner, campaign, original character sheet, original form and stage identity. Restoration uses the existing checked native request, footprint, enemy deck and hand refresh paths, one hero at a time, independent of F10. No progression snapshot or native transform record is edited.
+
+Three new source checks failed before implementation and pass afterward; all 68 Python Dev Tools/release checks pass. No Windows interop SDK, dotnet or live game is available here, so Windows compilation and gameplay are not verified.
+
+Acceptance: in a disposable local solo campaign, enable Hero Forms and transform two different heroes into different creatures. Complete a level with both alive, close F10, enter the next playable level, and verify both regain their own enemy forms and registered cards during an idle player turn. Repeat across another level, native reversion before completion, a fallen hero, a blocked large form (move the original hero into free space), disabling Hero Forms, beginning a different campaign, and restarting the game. Check that native reversion still restores original hero inventory, and that unrelated multiplayer/unverified boards are unchanged. Form choices are in-session only and the deck is regenerated; exact previous enemy HP, buffs, spent cards and cooldowns are not promised. If restoration fails, inspect the Hero Forms tab and BepInEx log for "BMF hero form carry-over".
 
 ## v0.6.35 adjustable Hand Size
 

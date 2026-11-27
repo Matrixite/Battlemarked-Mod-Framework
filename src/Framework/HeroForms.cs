@@ -23,6 +23,8 @@ internal static class HeroForms
         internal string Token, Session, Sheet, Source, Destination;
         internal ulong Owner;
         internal int Id;
+        internal bool Automatic;
+        internal IntPtr AutomaticState;
         internal UObject Definition;
         internal DateTime Expires;
     }
@@ -100,6 +102,7 @@ internal static class HeroForms
             context.Patches.Patch(handle, prefix: Hook(nameof(HandleCommand)));
             ctx = context;
             HeroFormCards.Attach(context);
+            HeroFormPersistence.Attach(context);
             Status = "Hero forms ready for a new disposable solo campaign.";
             context.Log.LogInfo("BMF hero forms: native request and transformation capture hooks attached.");
         }
@@ -111,11 +114,18 @@ internal static class HeroForms
         }
     }
     internal static void ReportCardDeck(string message) { Status = message; }
-    internal static void Cancel() { pending = null; }
+    internal static void Cancel()
+    {
+        // Closing the map tool must not cancel a level carry-over already
+        // submitted by the background restoration worker.
+        if (pending != null && pending.Automatic && Plugin.Instance?.HeroFormsEnabled == true) return;
+        pending = null;
+    }
     internal static void Stop()
     {
         HeroFormCards.Stop();
-        Cancel(); handlers.Clear(); helpers.Clear(); transform = null; ctx = null;
+        HeroFormPersistence.Stop();
+        pending = null; handlers.Clear(); helpers.Clear(); transform = null; ctx = null;
     }
     private static void CaptureHandler(object __1, object __result)
     {
@@ -151,7 +161,9 @@ internal static class HeroForms
     private static string Key(object id) => (string)Call(id, "get_Id") + " | " + (string)Call(id, "get_Guid");
     private static bool MatchState(object state, Command command) =>
         !string.IsNullOrWhiteSpace(command.Session) && Session(state) == command.Session &&
-        Call(Get(state, "hostPlayerId"), "get_Id") is ulong host && host == command.Owner;
+        Call(Get(state, "hostPlayerId"), "get_Id") is ulong host && host == command.Owner &&
+        (!command.Automatic || command.AutomaticState == IntPtr.Zero ||
+            state is Il2CppObjectBase native && native.Pointer == command.AutomaticState);
 
     // Any healthy, ordinary 1x1 local party hero during an idle player turn.
     // No nested transforms until native revert behavior has been accepted in-game.
@@ -237,14 +249,14 @@ internal static class HeroForms
         {
             if (pending != null && DateTime.UtcNow > pending.Expires)
             {
-                Cancel(); Status = "Native transformation request not observed (timed out).";
+                pending = null; Status = "Native transformation request not observed (timed out).";
                 ctx?.Log.LogWarning("BMF hero forms: " + Status);
             }
             return pending != null || HeroFormCards.Waiting;
         }
     }
 
-    internal static string Queue(LevelEditor.Context context, object piece, UObject definition, object id)
+    internal static string Queue(LevelEditor.Context context, object piece, UObject definition, object id, bool automatic = false)
     {
         if (Plugin.Instance?.HeroFormsEnabled != true) throw new InvalidOperationException("Hero Forms disabled in Mods.");
         if (!Active || transform == null) throw new InvalidOperationException(Status);
@@ -259,12 +271,15 @@ internal static class HeroForms
         var command = new Command { Context = live, Token = "bmf-hero-form-" + Guid.NewGuid().ToString("N"),
             Session = Session(live.State), Sheet = Sheet(piece), Owner = Owner(piece),
             Id = (int)Call(Get(piece, "pieceId"), "get_Id"), Source = Key(Get(piece, "typeId")), Destination = Key(id),
-            Definition = definition, Expires = DateTime.UtcNow.AddSeconds(15) };
+            Definition = definition, Automatic = automatic, Expires = DateTime.UtcNow.AddSeconds(15) };
         if (command.Source == command.Destination) throw new InvalidOperationException("Hero already has this form.");
-        int matches = 0;
+        var matches = new HashSet<IntPtr>();
         foreach (var state in handlers.Values)
-            if (helpers.ContainsKey(state.Pointer) && MatchState(state, command)) matches++;
-        if (matches != 1) throw new InvalidOperationException("No unique native transformation session. Enable Dev mode before a new campaign.");
+            if (helpers.ContainsKey(state.Pointer) && MatchState(state, command) &&
+                (!automatic || HeroFormPersistence.MatchesStage(state, live.State))) matches.Add(state.Pointer);
+        if (matches.Count != 1) throw new InvalidOperationException("No unique native transformation session. Start a verified local solo campaign.");
+        if (automatic)
+            foreach (var match in matches) command.AutomaticState = match;
         var message = commandType.GetConstructor(new[] { typeof(string) })?.Invoke(new object[] { command.Token });
         var request = LevelEditor.CheckedRequest(message, commandType, requestType);
         var send = Exact(Load("Jade.Networking", "Jade.Networking.LocalNetworkRoom"), "Send", false, typeof(void), requestType);
@@ -273,7 +288,7 @@ internal static class HeroForms
         pending = command;
         Status = "Hero form request submitted; waiting for native handler.";
         try { send.Invoke(live.Room, new[] { request }); }
-        catch { Cancel(); throw; }
+        catch { pending = null; throw; }
         ctx.Log.LogInfo("BMF hero forms: request submitted for " + definition.name);
         return "Hero form request submitted; waiting for native handler.";
     }
@@ -292,7 +307,8 @@ internal static class HeroForms
             if (DateTime.UtcNow > command.Expires ||
                 !HouseRules.TryGetHeroFormsContext(out var live, out _) || !command.Context.SameSession(live) ||
                 __instance is not Il2CppObjectBase handler || !handlers.TryGetValue(handler.Pointer, out var state) ||
-                !MatchState(state, command) || !helpers.TryGetValue(state.Pointer, out var helper))
+                !MatchState(state, command) || !helpers.TryGetValue(state.Pointer, out var helper) ||
+                (command.Automatic && !HeroFormPersistence.MatchesStage(state, live.State)))
                 throw new InvalidOperationException("Native request no longer matches the confirmed session.");
             var board = Get(state, "board");
             if (Call(board, "get_IsLoaded") is not bool loaded || !loaded)
@@ -313,6 +329,7 @@ internal static class HeroForms
                 throw new InvalidOperationException("Native form definition changed.");
             ValidateFormFit(board, piece, registered);
             string deckStatus = HeroFormCards.Arm(live, state, helper, piece, registered);
+            HeroFormPersistence.Arm(live, state, helper, piece, registered, command.Automatic);
             // Keep owner, Players team and real sheet. Native transformation
             // manages despawn, turn queue, form record, card/trait rules and events.
             __result = transform.Invoke(helper, new[] { piece, id, Get(piece, "ownerId"), Get(piece, "team"),
@@ -326,6 +343,7 @@ internal static class HeroForms
         {
             pending = null;
             HeroFormCards.CancelArmed();
+            HeroFormPersistence.CancelArmed();
             Status = "Hero form rejected: " + ex.GetBaseException().Message;
             ctx?.Log.LogWarning("BMF " + Status);
             return true;

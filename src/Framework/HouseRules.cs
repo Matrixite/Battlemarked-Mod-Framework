@@ -1230,6 +1230,8 @@ internal sealed class HouseRules : BattlemarkedModule
     public override void OnUpdate()
     {
         if (Plugin.Instance?.HeroFormsEnabled != true) HeroForms.Cancel();
+        if (Plugin.Instance?.HeroFormsEnabled != true) HeroFormPersistence.Clear();
+        else HeroFormPersistence.Tick();
         if (Plugin.Instance?.DeveloperModeEnabled != true) EnemyMover.Cancel();
         if (Plugin.Instance?.DeveloperModeEnabled != true) { debugCardRegistries.Clear(); debugSpawnContexts.Clear(); }
         if (Plugin.Instance?.DeveloperModeEnabled != true && Plugin.Instance?.HeroFormsEnabled != true) debugBoardHandler = null;

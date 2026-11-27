@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.35-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.36-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,12 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.36 — Hero Forms carry over between levels
+
+With Hero Forms enabled, living local party heroes transformed into enemy forms by BMF now have their individual forms remembered when a level completes successfully. The game still performs its native reversion and progression recording. Once the next playable board loads in the same local solo campaign and a player turn is idle, BMF automatically requests the same native transformation for each matching original hero, including the enemy's registered deck and hand refresh. No F10 interaction is required. Large forms wait for an available footprint; move the original hero into open space if necessary. Heroes reverted before the level completes, fallen heroes, different characters and unrelated campaigns are not restored.
+
+This is in-session carry-over for transformations performed after installing this version, not a saved cross-restart form choice. The native progression system still determines hero stats and inventory; the enemy deck is freshly prepared, not an exact copy of the previous hand, cooldowns or buffs. Disabling Hero Forms clears pending carry-over. The standard native transformation/reversion behavior is unchanged. Windows compile and gameplay acceptance are pending; test in a disposable solo campaign. The Hero Forms tab and BepInEx log report carry-over status.
 
 ## v0.6.35 — Adjustable Hand Size
 

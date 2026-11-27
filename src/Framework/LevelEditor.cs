@@ -1113,7 +1113,7 @@ internal sealed class LevelEditor
             if (GUI.Button(new Rect(x + 15 + inner - 65, y + footer - 25, 65, 24), ">")) enemyPage = Math.Min(pages - 1, enemyPage + 1);
             Label(footer, "Hero form: " + (selectedEnemy?.Name ?? "select registered creature or boss from list"));
             Label(footer + 24, "Select a form, press Transform hero, then middle-click any eligible hero during a player turn.");
-            Label(footer + 48, "Large forms need open space. Native rules may change cards and stats.");
+            Label(footer + 48, HeroFormPersistence.Status);
             Label(height - 27, status);
         }
         catch (Exception ex)
