@@ -34,6 +34,7 @@ internal sealed class GameplayProbe : BattlemarkedModule
         new("dice.encounter.resolve", "ViewEventHandlerResolveEncounterDiceRoll", "20011275128ACD", nameof(DiceResolve))
     };
     private static readonly long[] Totals = new long[Targets.Length];
+    internal static string[] Summary() => Targets.Select((t, i) => t.Kind + ": " + Interlocked.Read(ref Totals[i])).ToArray();
     private static readonly long[] Delivered = new long[Targets.Length];
     private readonly string[] statuses = new string[Targets.Length];
     private ModuleContext context;

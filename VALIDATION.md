@@ -1,8 +1,14 @@
-# v0.6.15-alpha validation
+# v0.6.16-alpha validation
 
 ## First stable release automation
 
 The 12 Python release-gate and simulated publication tests pass locally. These cover the current alpha skip, exact stable-version eligibility, inconsistent version rejection, wrong branch refusal, mismatched tag refusal, versioned source archive and matching SHA-256 checksum, and repeated-run protection. The publication tests use a temporary local Git remote and mock GitHub CLI; they do not create a real release. The hosted workflow is configured to run the .NET 8 core tests before publication; dotnet and the Windows game environment are unavailable here. Real GitHub Actions execution and Windows/gameplay acceptance remain unverified. No framework version, gameplay behavior or updater code changes are included in this automation.
+
+## v0.6.16 debug workspace
+
+Source regression checks cover the independent developer workspace, search and explicit refresh, scene/visibility cleanup, one-shot confirmation and Update dispatch, verified native room and authoritative piece lookup, registry verification, selection identity guards, and the retained native-menu readiness guard. The supplied verified IL2CPP metadata confirms the browser types/getters, RequestGiveCard constructor, LocalNetworkRoom.Send and queue getter, BoardHelpers.GetPiece, and the request handler's gameState/cardRegistry fields. Native disassembly confirms the handler resolves card definitions through its CardRegistry. The card command fails closed if its optional constructor capture is unavailable or the HUD model does not share the captured game-state identity.
+
+Windows compilation and live game acceptance are pending. In a disposable local solo session with backups: enable Developer mode before starting a campaign (House rules enabled); open Dev Tools, Refresh each browser, test filtering and pagination, select a board hero then a card, confirm one grant, check the actual hand and the BepInEx log. Verify a busy room, nonhero, stale selection, different scene, unverified build and online/multiplayer session cannot dispatch a grant. Check disabling Developer mode cancels selections/captures, verify the rest of F10 remains usable, and confirm the original Native page still reports the retail restriction. Events require the corresponding diagnostic modules to be running. Source tests do not substitute for a Windows build or runtime test.
 
 ## v0.6.15 native menu retail restriction
 

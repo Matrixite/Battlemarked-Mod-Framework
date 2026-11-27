@@ -17,6 +17,7 @@ internal sealed class ModMenu
 {
     private readonly Plugin plugin;
     private readonly NativeDebugMenu nativeDebugMenu;
+    private readonly DebugWorkspace debugWorkspace;
     private readonly ManualLogSource log;
     private readonly ConfigEntry<bool> enabled, developerMode;
     private readonly ConfigFile config;
@@ -41,6 +42,7 @@ internal sealed class ModMenu
     {
         this.plugin = plugin; this.log = log; this.config = config;
         nativeDebugMenu = new NativeDebugMenu(plugin, log);
+        debugWorkspace = new DebugWorkspace(plugin, log);
         enabled = config.Bind("Menu", "Enabled", true, "Enable experimental desktop mod manager.");
         developerMode = config.Bind("Menu", "DeveloperMode", false, "Show built-in diagnostic and example modules, Reports and Dev Tools. Disabling also closes a native debug menu opened through BMF; module settings are unchanged.");
         open = config.Bind("Menu", "StartOpen", false, "Open menu automatically; fallback if F10 is unavailable.").Value;
@@ -121,9 +123,11 @@ internal sealed class ModMenu
             e.Use();
         }
     }
+    internal bool DeveloperModeEnabled => developerMode.Value && enabled.Value && !broken;
     internal void Tick()
     {
         if (!developerMode.Value) nativeDebugMenu.CloseOwned();
+        debugWorkspace.Tick(developerMode.Value && enabled.Value && !broken && open && tab == 7);
         if (!enabled.Value || broken) return;
         if (!inputChecked) { inputChecked = true; ResolveInput(); }
         if (poll == null) return;
@@ -308,10 +312,9 @@ internal sealed class ModMenu
 
             if (tab == 7)
             {
-                Label(97, "Dev Tools | experimental native game debug menu");
-                Label(128, "Use only in a disposable local solo game. Back up saves first.");
-                Label(159, "Retail builds may include only an empty debug-menu shell.");
-                if (!plugin.VerifiedGame) { Label(190, "Unavailable: unverified game build."); return; }
+                if (!developerMode.Value || !debugWorkspace.Draw(x, y, width, height)) return;
+                Label(158, "Optional native menu | retail builds may disable it.");
+                if (!plugin.VerifiedGame) { Label(184, "Unavailable: unverified game build."); return; }
                 if (developerMode.Value && Button(193, "Show game debug menu"))
                 {
                     if (nativeDebugMenu.SetVisible(true)) SetOpen(false);

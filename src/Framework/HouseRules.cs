@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Threading;
 using HarmonyLib;
 using BepInEx.Configuration;
+using Il2CppInterop.Runtime.InteropTypes;
 using UnityEngine.SceneManagement;
 
 namespace Battlemarked.ModFramework;
@@ -39,6 +40,10 @@ internal sealed class HouseRules : BattlemarkedModule
     private int unverifiedHealthTransition;
     private MethodInfo hudModel, networkRoom, localPlayerCount, roomTryCast, roomPlayers, roomConnected, roomHost;
     private Type localRoomType;
+    // The actual request handler owns the card registry used for grants.
+    // Keep a bounded set of captures, keyed by the native GameState identity.
+    private readonly Dictionary<IntPtr, (Il2CppObjectBase State, object Registry)> debugCardRegistries = new();
+    private bool debugRegistryCaptureError;
     private bool modelFromHud;
     private int ignoredGetterCaptures;
     private string roomHook = "not attempted", lastFlags = "not observed", lastRejectedFlags = "not observed";
@@ -325,6 +330,21 @@ internal sealed class HouseRules : BattlemarkedModule
                 roomHook = "bound";
             }
             catch (Exception ex) { roomTryCast = null; roomHook = "unavailable: " + ex.Message; ctx.Log.LogWarning("Optional local room proof: " + ex.Message); }
+            // Optional, read-only capture of the actual request handler's registry.
+            // Never rely on a disabled developer facade or an unregistered asset.
+            try
+            {
+                var handler = logic.GetType("Jade.GameLogic.RequestHandlerGiveCard", true);
+                var stateType = gameModel.GetType("Jade.GameModel.GameState", true);
+                var registryType = Assembly.Load(new AssemblyName("GameDefinitions"))
+                    .GetType("Jade.GameDefinitions.CardRegistry", true);
+                var constructor = handler.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                    .Single(c => c.GetParameters().Length == 3 &&
+                        c.GetParameters().Any(p => p.ParameterType == stateType) &&
+                        c.GetParameters().Any(p => p.ParameterType == registryType));
+                ctx.Patches.Patch(constructor, postfix: Hook(nameof(CaptureDebugCardRegistry)));
+            }
+            catch (Exception ex) { ctx.Log.LogWarning("Optional debug card registry capture: " + ex.Message); }
             // The supplied interop report has separate native start and join
             // entry points. Keep this independent of the working AP hooks.
             try
@@ -591,8 +611,10 @@ internal sealed class HouseRules : BattlemarkedModule
         try { return method.Invoke(target, null) is int n ? n : null; }
         catch { return null; }
     }
-    private bool CheckLocalRoom(object m, out string proof)
+    private bool CheckLocalRoom(object m, out string proof) => TryGetLocalRoom(m, out _, out proof);
+    private bool TryGetLocalRoom(object m, out object verifiedRoom, out string proof)
     {
+        verifiedRoom = null;
         proof = "not verified";
         if (!modelFromHud) { proof = "not HUD"; return false; }
         if (roomTryCast == null) { proof = "binding unavailable"; return false; }
@@ -605,9 +627,81 @@ internal sealed class HouseRules : BattlemarkedModule
             bool? connected = ReadFlag(roomConnected, nativeLocal), isHost = ReadFlag(roomHost, nativeLocal);
             int? count = ReadCount(roomPlayers, nativeLocal), locals = ReadCount(localPlayerCount, m);
             proof = $"local room connected={connected?.ToString() ?? "?"} host={isHost?.ToString() ?? "?"} roomPlayers={count?.ToString() ?? "?"} localPlayers={locals?.ToString() ?? "?"}";
-            return SessionModelGuard.LocalRoomProof(modelFromHud, true, connected, isHost, count, locals);
+            if (!SessionModelGuard.LocalRoomProof(modelFromHud, true, connected, isHost, count, locals))
+                return false;
+            verifiedRoom = nativeLocal;
+            return true;
         }
         catch (Exception ex) { proof = "room read failed: " + ex.GetType().Name; return false; }
+    }
+    private static void CaptureDebugCardRegistry(object __instance)
+    {
+        var r = running;
+        if (r == null || r.faulted || Plugin.Instance?.DeveloperModeEnabled != true ||
+            Environment.CurrentManagedThreadId != r.mainThread) return;
+        try
+        {
+            var state = DebugWorkspace.ReadMember(__instance, "gameState") as Il2CppObjectBase;
+            var registry = DebugWorkspace.ReadMember(__instance, "cardRegistry");
+            if (state == null || state.Pointer == IntPtr.Zero || registry == null) return;
+            if (r.debugCardRegistries.Count >= 8 && !r.debugCardRegistries.ContainsKey(state.Pointer))
+                r.debugCardRegistries.Clear();
+            r.debugCardRegistries[state.Pointer] = (state, registry);
+        }
+        catch (Exception ex)
+        {
+            if (!r.debugRegistryCaptureError)
+                r.ctx.Log.LogWarning("Debug card registry capture failed: " + ex.GetBaseException().Message);
+            r.debugRegistryCaptureError = true;
+        }
+    }
+
+    // A debug command must resolve the current authoritative piece, not trust
+    // a view object, a cached snapshot, or a session flag alone.
+    internal static bool TryGetDebugRoomForPieceId(object pieceId, object cardId, UnityEngine.Object definition, out object room, out string reason)
+    {
+        room = null;
+        reason = "Verified local session unavailable (House rules must be running).";
+        var r = running;
+        if (r == null || r.faulted || Plugin.Instance?.DeveloperModeEnabled != true || pieceId == null || cardId == null || definition == null ||
+            Environment.CurrentManagedThreadId != r.mainThread || !r.modelFromHud || r.model == null ||
+            !SessionModelGuard.RetainCapture(r.capturedSceneHandle, SceneManager.GetActiveScene().handle))
+            return false;
+        try
+        {
+            var model = r.model;
+            var state = DebugWorkspace.ReadMember(model, "gameState") as Il2CppObjectBase;
+            if (state == null || state.Pointer == IntPtr.Zero ||
+                !r.debugCardRegistries.TryGetValue(state.Pointer, out var capture))
+            { reason = "No matching game request registry captured yet."; return false; }
+            var board = DebugWorkspace.ReadMember(state, "board");
+            var gameModel = Assembly.Load(new AssemblyName("Jade.GameModel"));
+            var boardType = gameModel.GetType("Jade.GameModel.Board", true);
+            var idType = gameModel.GetType("Jade.GameModel.PieceId", true);
+            var pieceType = gameModel.GetType("Jade.GameModel.Piece", true);
+            if (!boardType.IsInstanceOfType(board) || !idType.IsInstanceOfType(pieceId))
+                throw new InvalidOperationException("Board or piece ID type mismatch.");
+            var helper = gameModel.GetType("Jade.GameModel.BoardHelpers", true);
+            var getPiece = helper.GetMethod("GetPiece", BindingFlags.Public | BindingFlags.Static,
+                null, new[] { boardType, idType }, null);
+            if (getPiece == null || getPiece.ReturnType != pieceType)
+                throw new InvalidOperationException("Authoritative piece lookup unavailable.");
+            var piece = getPiece.Invoke(null, new[] { board, pieceId });
+            if (piece == null) { reason = "Selected piece no longer exists."; return false; }
+            reason = r.Scope(piece);
+            if (reason != "local solo hero") return false;
+            var lookup = capture.Registry.GetType().GetMethod("GetCardDefinition", BindingFlags.Public | BindingFlags.Instance,
+                null, new[] { cardId.GetType() }, null);
+            if (lookup == null || lookup.ReturnType.FullName != "Jade.GameDefinitions.CardDefinition" ||
+                lookup.Invoke(capture.Registry, new[] { cardId }) is not UnityEngine.Object registered ||
+                registered == null || registered != definition)
+            { reason = "Selected card is not registered in the current game."; return false; }
+            if (!r.TryGetLocalRoom(model, out room, out reason)) return false;
+            if (!ReferenceEquals(r.model, model) || !ReferenceEquals(running, r))
+            { room = null; reason = "Session model changed."; return false; }
+            return true;
+        }
+        catch (Exception ex) { room = null; reason = ex.GetBaseException().Message; return false; }
     }
     private int Allowance(object piece) => (int)allowance.Invoke(piece, null);
     private int Remaining(object piece) => (int)remaining.Invoke(null, new[] { piece });
@@ -928,6 +1022,7 @@ internal sealed class HouseRules : BattlemarkedModule
     public override void OnSceneChanged(SceneInfo info) => SyncScene(info.Handle, info.Name);
     public override void OnUpdate()
     {
+        if (Plugin.Instance?.DeveloperModeEnabled != true) debugCardRegistries.Clear();
         ConsumeUnverifiedHealthTransition();
         if (requestedRefundMode != refundMode && (DateTime.UtcNow - lastModeCheck).TotalSeconds >= 1)
             TryApplyModeChange();
@@ -953,5 +1048,5 @@ internal sealed class HouseRules : BattlemarkedModule
         }
         catch (Exception ex) { ctx.Log.LogWarning("House rules report: " + ex.Message); }
     }
-    public override void OnStop() { health?.CancelForTransition("Module stopped"); LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); health?.Write(); }
+    public override void OnStop() { debugCardRegistries.Clear(); health?.CancelForTransition("Module stopped"); LoseScope("module stopped"); if (ReferenceEquals(running, this)) { running = null; model = null; } Write(); health?.Write(); }
 }

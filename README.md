@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.15-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.16-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,20 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.16 — BMF-owned debug workspace
+
+F10 > Mods > Developer mode ON > Dev Tools opens a new independent inspector, without using the disabled native menu. Choose a page, then **Refresh** for a bounded, searchable snapshot of loaded objects:
+
+- **Scene:** active-scene Unity objects, activation state, child count and position.
+- **Board:** current-scene piece views and IDs/positions. Select a hero for the Cards page.
+- **Pieces:** loaded piece definitions, type IDs and base HP/AP/attack.
+- **Cards:** loaded card definitions and IDs/GUIDs. Select a card after selecting a hero on Board; press Grant, then Confirm grant to submit one experimental request.
+- **Encounters:** loaded encounter assets and GUIDs.
+- **Events:** observed core/gameplay method-call totals for running diagnostic modules.
+- **Native:** the original guarded launcher, retained for compatibility.
+
+Browsing is read-only and not a complete asset catalogue. Snapshots are capped at 4,096 inspected objects, can contain inactive/preview objects, and are cleared on scene change or leaving Dev Tools. Card grants require the verified game build, House rules running, Developer mode enabled **before a local campaign is created** (for registry capture), an active local hero, a current HUD-backed native room with exactly one connected local player/host, matching game-state registry, unchanged selection IDs and an idle request queue. The framework sends the normal native card request, not a direct inventory write; submission does not guarantee delivery. Use only disposable local solo sessions with save backups. Unavailable bindings or unproven scope fail closed. No spawning or level editing yet. This alpha has not been compiled against the installed Windows interop files or tested in a live game.
 
 ## v0.6.15 — native debug menu retail-build detection
 
