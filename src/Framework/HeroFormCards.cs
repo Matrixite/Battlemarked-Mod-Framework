@@ -85,6 +85,7 @@ internal static class HeroFormCards
             var hook = typeof(HeroFormCards).GetMethod(nameof(ApplySpawnDeck), BindingFlags.NonPublic | BindingFlags.Static);
             context.Patches.Patch(spawn, postfix: new HarmonyMethod(hook));
             ctx = context;
+            HeroFormHandRefresh.Attach(context);
             Status = "Enemy card deck hook ready.";
             ctx.Log.LogInfo("BMF hero form cards: native spawn-inventory hook attached.");
         }
@@ -99,6 +100,7 @@ internal static class HeroFormCards
     internal static void Stop()
     {
         CancelArmed();
+        HeroFormHandRefresh.Stop();
         ctx = null; inventoryCtor = null; inventorySetter = addToHand = nextCardId = null;
     }
     internal static void CancelArmed() { armed = null; }
@@ -339,6 +341,7 @@ internal static class HeroFormCards
             // SpawnPieceInternal has not yet returned to SpawnPieces, so the
             // next PieceSnapshot already contains the new hand and IDs.
             inventorySetter.Invoke(piece, new object[] { staged });
+            HeroFormHandRefresh.Queue(ticket.Context, piece, ticket.Owner, ticket.Sheet, ticket.FormKey, instanceIds);
             Report("Enemy deck ready: " + ticket.CardIds.Count + " cards for " + ticket.FormName + ".");
         }
         catch (Exception ex)

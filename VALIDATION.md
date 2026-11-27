@@ -1,4 +1,10 @@
-# v0.6.30-alpha validation
+# v0.6.31-alpha validation
+
+## v0.6.31 immediate hand refresh
+
+User reports that enemy cards appear after moving the transformed hero. This suggests the new deck exists but its presentation is stale. Verified supplied game metadata for both GameView.dll CardHandPresenterNonVR and CardHandPresenterVR Tick and RefreshCardHandAfterLoad(PlayerId), BoardHelpers.TryGetCurrentPiece(Board, out Piece), CardInventory.TryGetCard(int, out CardState), IPlayerIdProvider.LocalPlayerID, and the non-VR IRequestProcessingSignalReader.IsProcessingRequests. Native RefreshCardHandAfterLoad delegates to the game's hand presenter helper, which selects the current owned piece; native ShowForPiece reads the selected piece's inventory and rebuilds the displayed hand. The one-use callback is queued only after successful inventory publication and waits for the matching HUD piece and all its card instance IDs, same verified local board, owner and idle requests. It cannot grant cards or move a piece. Three new structural regression checks fail when the implementation is absent and pass afterward; all 56 Python Dev Tools/release checks pass. No Windows game SDK, dotnet or in-game test is available here.
+
+Acceptance on a disposable local solo board: transform into an enemy and wait for its animation to finish. Before moving, inspect the creature's new hand and try a valid enemy card. Repeat for a large enemy with sufficient space. Verify the original hero inventory on native revert and ordinary hero-to-hero/native enemy spawns remain unchanged. Check the BepInEx log for "BMF hero form hand refresh" if the hand does not update. VR presenter integration is also unverified in actual gameplay.
 
 ## v0.6.30 enemy form deck
 
