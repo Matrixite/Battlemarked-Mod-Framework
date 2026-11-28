@@ -90,7 +90,7 @@ internal static class HeroFormPersistence
         return field ?? throw new InvalidOperationException("Transition processor field missing.");
     }
     private static object Read(MemberInfo m, object obj) => m is PropertyInfo p ? p.GetValue(obj) : ((FieldInfo)m).GetValue(obj);
-    private static string Key(object id)
+    internal static string Key(object id)
     {
         if (Call(id, "get_Id") is not string name || string.IsNullOrWhiteSpace(name) ||
             Call(id, "get_Guid") is not string guid || string.IsNullOrWhiteSpace(guid))
@@ -101,7 +101,7 @@ internal static class HeroFormPersistence
     private static int PieceId(object piece) => (int)Call(Get(piece, "pieceId"), "get_Id");
     // Scene wrappers may use either the stable ID or GUID. Require at
     // least one and compare the complete pair, not a display name.
-    private static string StageKey(object id)
+    internal static string StageKey(object id)
     {
         if (id == null) return "";
         var name = Call(id, "get_Id") as string;
@@ -192,6 +192,20 @@ internal static class HeroFormPersistence
         destination = null; loadSequence = 0; nextTick = DateTime.MinValue;
         if (ctx != null) Status = "Forms remembered across local adventures; large forms need space.";
     }
+    // Clearing a saved default also forgets earlier automatic carry-over
+    // for that exact saved character; leave the current native piece alone.
+    internal static void ForgetStartingChoice(string key)
+    {
+        if (key == null) return;
+        if (armed != null && StartingKey(armed) == key) armed = null;
+        for (int i = active.Count - 1; i >= 0; i--)
+            if (StartingKey(active[i]) == key) active.RemoveAt(i);
+        for (int i = carry.Count - 1; i >= 0; i--)
+            if (StartingKey(carry[i]) == key) carry.RemoveAt(i);
+    }
+    private static string StartingKey(Form form) => form.SheetVerified ?
+        StartingFormStore.CharacterKey(form.Sheet, form.OriginalKey, form.Account) : null;
+
     internal static void Stop()
     {
         ctx = null; Clear(); transitionProcessors.Clear();
@@ -289,6 +303,14 @@ internal static class HeroFormPersistence
     // uses a GUID; a non-GUID ID additionally requires the same account.
     private static bool TryReadHolder(object state, object piece, string originalKey, out string account)
     {
+        if (!TryReadCharacterSheet(state, piece, out var selected, out account)) return false;
+        try { return Key(Get(selected, "pieceTypeId")) == originalKey; }
+        catch { return false; }
+    }
+
+    internal static bool TryReadCharacterSheet(object state, object piece, out object selected, out string account)
+    {
+        selected = null;
         account = null;
         try
         {
@@ -308,10 +330,10 @@ internal static class HeroFormPersistence
             var sheetArgs = new object[] { sheetId, null, false };
             if (Exact(playerType, "HasCharacterSheet", false, typeof(bool), sheetId.GetType(), sheetType.MakeByRefType(), typeof(bool))
                 .Invoke(player, sheetArgs) is not bool hasSheet || !hasSheet || sheetArgs[1] == null) return false;
-            var selected = sheetArgs[1];
-            if (Call(Get(selected, "characterSheetId"), "get_Id") as string != Sheet(piece) ||
-                Key(Get(selected, "pieceTypeId")) != originalKey ||
-                Get(selected, "isRetired") is not bool retired || retired) return false;
+            var sheet = sheetArgs[1];
+            if (Call(Get(sheet, "characterSheetId"), "get_Id") as string != Sheet(piece) ||
+                Get(sheet, "isRetired") is not bool retired || retired) return false;
+            selected = sheet;
             account = Get(player, "accountId") as string;
             return true;
         }
@@ -591,6 +613,10 @@ internal static class HeroFormPersistence
                 // Never replace a different form or different character,
                 // and never resurrect a fallen/downed hero.
                 if (!MatchesCharacter(form, live.State, piece)) continue;
+                // A saved default supersedes the previous adventure's
+                // temporary form (including when the default needs space).
+                if (HeroStartingForms.PreferStartingForm(live, piece))
+                { carry.RemoveAt(i); i--; continue; }
                 try { HeroForms.ValidatePiece(live.State, live.Board, piece); }
                 catch { continue; } // Wait for a living hero's turn.
                 var id = formIdCtor.Invoke(new object[] { form.FormId, form.FormGuid });

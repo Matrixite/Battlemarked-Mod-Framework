@@ -484,3 +484,47 @@ try
 }
 finally { Directory.Delete(supportRoot, true); }
 Console.WriteLine("PASS: support bundle allowlist and manifest assertions.");
+
+// Persistent starting forms are scoped to saved characters, not party slots.
+string sheetA = Guid.NewGuid().ToString("D"), sheetB = Guid.NewGuid().ToString("D");
+string startingA = StartingFormStore.CharacterKey(sheetA, "Hero | GUID-A", "account-a");
+string startingB = StartingFormStore.CharacterKey(sheetB, "Hero | GUID-A", "account-a");
+Check(startingA != startingB, "separate characters of the same class");
+Check(startingA == StartingFormStore.CharacterKey(sheetA.ToUpperInvariant(), "Hero | GUID-A", "account-b"), "stable generated sheet across sessions");
+Check(startingA != StartingFormStore.CharacterKey(sheetA, "Other | GUID-B", "account-a"), "original hero type is part of key");
+Check(StartingFormStore.CharacterKey("legacy-id", "Hero | GUID-A", null) == null, "legacy sheet needs account");
+Check(StartingFormStore.CharacterKey("legacy-id", "Hero | GUID-A", "a") !=
+    StartingFormStore.CharacterKey("legacy-id", "Hero | GUID-A", "b"), "legacy IDs isolated by account");
+string startingDir = Path.Combine(Path.GetTempPath(), "bmf-starting-test-" + Guid.NewGuid().ToString("N"));
+try
+{
+    string path = Path.Combine(startingDir, "starting-forms.json");
+    var startingStore = new StartingFormStore(path);
+    startingStore.Set(new StartingFormAssignment { CharacterKey = startingA, HeroName = "Hero A", FormId = "MonsterA", FormGuid = "id-a", FormName = "Monster A" });
+    startingStore.Set(new StartingFormAssignment { CharacterKey = startingB, HeroName = "Hero B", FormId = "MonsterB", FormGuid = "id-b", FormName = "Monster B" });
+    var reloaded = new StartingFormStore(path);
+    Check(reloaded.Get(startingA).FormKey == "MonsterA | id-a" && reloaded.Get(startingB).FormKey == "MonsterB | id-b", "saved defaults survive restart");
+    Check(!File.ReadAllText(path).Contains(sheetA), "raw sheet ID not written");
+    reloaded.Clear(startingA);
+    var cleared = new StartingFormStore(path);
+    Check(cleared.Get(startingA) == null && cleared.Get(startingB) != null, "clearing one hero preserves other defaults");
+    File.WriteAllText(path, "not valid JSON");
+    bool corruptRejected = false;
+    try { _ = new StartingFormStore(path); } catch (System.Text.Json.JsonException) { corruptRejected = true; }
+    Check(corruptRejected && File.ReadAllText(path) == "not valid JSON", "corrupt preferences fail closed without overwriting");
+}
+finally { if (Directory.Exists(startingDir)) Directory.Delete(startingDir, true); }
+var startingRun = new StartingFormRun();
+Check(startingRun.Observe("session-a", "campaign", "scenario", "run-a", "step1", 0), "first board observed");
+Check(startingRun.CanApply(startingA) && startingRun.CanApply(startingB), "both heroes independently eligible");
+startingRun.MarkAttempt(startingA);
+Check(!startingRun.CanApply(startingA) && startingRun.CanApply(startingB) && startingRun.HasPriority(startingA), "one request per hero with saved-default priority");
+startingRun.Defer(startingB);
+Check(!startingRun.CanApply(startingB) && !startingRun.HasPriority(startingB), "edit waits until next adventure");
+Check(startingRun.MatchesFirstBoard("session-a", "campaign", "scenario", "run-a", "step1", 0), "authoritative start board matches");
+Check(!startingRun.MatchesFirstBoard("session-a", "campaign", "scenario", "run-a", "step2", 1), "reject stale start request after changing level");
+startingRun.Observe("session-b", "campaign", "scenario", "run-a", "step2", 1);
+Check(!startingRun.FirstBoard && !startingRun.CanApply(startingA), "new level of same run never repeats default");
+startingRun.Observe("session-b", "campaign", "scenario", "run-b", "step1", 0);
+Check(startingRun.CanApply(startingA) && startingRun.CanApply(startingB), "new run resets per-hero attempts and deferrals");
+Console.WriteLine("PASS: persistent per-character starting forms and once-per-adventure gate.");

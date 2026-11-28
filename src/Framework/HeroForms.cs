@@ -20,10 +20,11 @@ internal static class HeroForms
     private sealed class Command
     {
         internal LevelEditor.Context Context;
-        internal string Token, Session, Sheet, Source, Destination;
+        internal string Token, Session, Sheet, Source, Destination, StartingKey;
         internal ulong Owner;
         internal int Id;
         internal bool Automatic;
+        internal long StartingEpoch;
         internal IntPtr AutomaticState;
         internal UObject Definition;
         internal DateTime Expires;
@@ -103,6 +104,7 @@ internal static class HeroForms
             ctx = context;
             HeroFormCards.Attach(context);
             HeroFormPersistence.Attach(context);
+            HeroStartingForms.Attach(context);
             Status = "Hero forms ready for a new disposable solo campaign.";
             context.Log.LogInfo("BMF hero forms: native request and transformation capture hooks attached.");
         }
@@ -125,6 +127,7 @@ internal static class HeroForms
     {
         HeroFormCards.Stop();
         HeroFormPersistence.Stop();
+        HeroStartingForms.Stop();
         pending = null; handlers.Clear(); helpers.Clear(); transform = null; ctx = null;
     }
     private static void CaptureHandler(object __1, object __result)
@@ -259,7 +262,7 @@ internal static class HeroForms
         }
     }
 
-    internal static string Queue(LevelEditor.Context context, object piece, UObject definition, object id, bool automatic = false)
+    internal static string Queue(LevelEditor.Context context, object piece, UObject definition, object id, bool automatic = false, string startingKey = null)
     {
         if (Plugin.Instance?.HeroFormsEnabled != true) throw new InvalidOperationException("Hero Forms disabled in Mods.");
         if (!Active || transform == null) throw new InvalidOperationException(Status);
@@ -274,7 +277,7 @@ internal static class HeroForms
         var command = new Command { Context = live, Token = "bmf-hero-form-" + Guid.NewGuid().ToString("N"),
             Session = Session(live.State), Sheet = Sheet(piece), Owner = Owner(piece),
             Id = (int)Call(Get(piece, "pieceId"), "get_Id"), Source = Key(Get(piece, "typeId")), Destination = Key(id),
-            Definition = definition, Automatic = automatic, Expires = DateTime.UtcNow.AddSeconds(15) };
+            Definition = definition, Automatic = automatic, StartingKey = startingKey, StartingEpoch = HeroStartingForms.Epoch, Expires = DateTime.UtcNow.AddSeconds(15) };
         if (command.Source == command.Destination) throw new InvalidOperationException("Hero already has this form.");
         var matches = new HashSet<IntPtr>();
         foreach (var state in handlers.Values)
@@ -323,6 +326,8 @@ internal static class HeroForms
             if (Sheet(piece) != command.Sheet || Owner(piece) != command.Owner || Key(Get(piece, "typeId")) != command.Source ||
                 !HouseRules.TryValidateLocalHero(live, piece, out _))
                 throw new InvalidOperationException("Native hero identity changed.");
+            if (command.StartingKey != null && !HeroStartingForms.Authorizes(command.StartingKey, command.Destination, command.StartingEpoch, state, piece))
+                throw new InvalidOperationException("Starting form preference changed or character no longer matches.");
             var registry = Get(helper, "pieceRegistry");
             var id = Call(command.Definition, "get_PieceTypeId");
             var registered = Exact(registry.GetType(), "GetPieceDefinition", false,

@@ -1,4 +1,12 @@
-# v0.6.38-alpha validation
+# v0.6.39-alpha validation
+
+## v0.6.39 Starting Forms
+
+Starting Forms reuses the verified native character-sheet lookup and transformation request, card deck and hand refresh paths. Saved assignments are keyed by an original hero type and a hashed saved-sheet identity (a generated GUID or account-scoped non-GUID ID). The bounded JSON preferences are written atomically and invalid files fail closed. The separate starting toggle defaults off. The worker reads the local party independently of the menu, distinguishes scenario runs and steps, allows one submitted request per character on the first playable board, defers edits until the next adventure, and checks the captured run epoch, stage, character and preference again in the native request handler. Existing carry-over yields to a saved default on the first board, and clearing that default removes its remembered carry-over without editing the native record.
+
+Six added Python source contracts failed before implementation; all 85 Python Dev Tools/release checks pass. The .NET core suite includes checks for stable character keys, alternate characters, saved-file reload/clear, corrupt-file rejection, distinct per-hero attempts, edits and next-run reset. The .NET SDK, Windows game interop and live game are unavailable here; neither compilation nor gameplay is verified.
+
+Acceptance: enable Hero Forms, enter a disposable local solo adventure, save different monsters for two characters in Starting Forms, enable the new switch and begin the next adventure with both characters. Verify both receive their selected forms and decks before moving, with F10 closed. Switch one monster during play and advance a level: keep the latest live form, then start another adventure and verify the default returns. Restart the game, select the same characters and verify saved assignments persist; a different newly created character of the same class must not inherit another hero's default. Test blocked bosses, unavailable registrations, toggling off during a pending request, editing mid-adventure, clearing one assignment and its old carry-over, clearing an offline saved character, and disabling the main Hero Forms switch. Confirm no unrelated or multiplayer changes. If rejected, check the log for "BMF starting forms" and the native Hero Forms status.
 
 ## v0.6.38 cross-adventure Hero Forms
 

@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.38-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.39-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,12 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.39 — Starting Forms
+
+In a verified local solo adventure, enable **Hero Forms** under **F10 > Mods**, then open **Hero Forms > Starting Forms**. Use the arrows to select one of the saved characters in your party, select a registered monster (including eligible bosses), and press **Save starting form**. Repeat for other heroes. Turn **Starting forms: ON** and begin another adventure; the selections apply automatically on the first playable board when native requests are idle and the target fits. New assignments and preferences are saved across game restarts in the framework's own configuration, not the game save. A monster that is absent from the new registry or cannot fit waits for a valid opportunity on that first board. If a native request is submitted but rejected, it is not repeatedly sent.
+
+Starting Forms is independent of Developer mode and defaults to OFF. Disabling the starting-forms switch retains saved assignments and stops new default requests; ordinary temporary Hero Forms and their existing in-session carry-over remain available. A saved starting form takes priority over the previous adventure's temporary form at the next adventure, not on each level. Live transformations and their latest forms can still carry between levels. Changes in the Starting Forms page made during an adventure take effect on the next adventure; a saved choice can also be cleared while the character is not in the party. **Use original next adventure** removes that character's saved default and previous BMF carry-over, but does not force native reversion of the current piece. The ordinary native game selection screen is unchanged, and unsupported or multiplayer boards never dispatch a starting request. If resuming after a restart, the first verified playable board observed is treated as the start. Windows build and in-game acceptance are pending; use disposable local campaigns while testing.
 
 ## v0.6.38 — Remember Hero Forms between adventures
 

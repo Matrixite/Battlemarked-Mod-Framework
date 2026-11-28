@@ -1229,6 +1229,7 @@ internal sealed class HouseRules : BattlemarkedModule
     public override void OnSceneChanged(SceneInfo info) => SyncScene(info.Handle, info.Name);
     public override void OnUpdate()
     {
+        HeroStartingForms.Tick();
         if (Plugin.Instance?.HeroFormsEnabled != true) HeroForms.Cancel();
         if (Plugin.Instance?.HeroFormsEnabled != true) HeroFormPersistence.Clear();
         else HeroFormPersistence.Tick();

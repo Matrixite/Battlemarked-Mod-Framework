@@ -20,7 +20,8 @@ internal sealed class LevelEditor
     private readonly List<Enemy> enemies = new();
     private readonly List<Enemy> matches = new();
     private readonly List<Enemy> forms = new();
-    private bool showForms;
+    private bool showForms, startingFormsView;
+    private string startingHeroKey;
     private SpawnCommand pendingForm;
     private RemovalTarget heroTarget;
     private TileCell[,] cells = new TileCell[WindowSize, WindowSize];
@@ -68,7 +69,9 @@ internal sealed class LevelEditor
     {
         internal readonly UObject Definition;
         internal readonly string Name, Key;
-        internal Enemy(UObject definition, string name, string key) { Definition = definition; Name = name; Key = key; }
+        internal readonly bool IsMonster;
+        internal Enemy(UObject definition, string name, string key, bool isMonster = false)
+        { Definition = definition; Name = name; Key = key; IsMonster = isMonster; }
     }
     private sealed class SpawnCommand
     {
@@ -418,6 +421,10 @@ internal sealed class LevelEditor
             Call(qualities, "get_UsesHealth") is bool health && health;
     }
 
+    internal static bool ValidateRegisteredStartingForm(Context context, UObject definition) =>
+        Call(definition, "get_PlayerControllable") is bool controllable && !controllable &&
+        ValidateFormDefinition(context, ResolveConfig(context), definition, out _, out _, out _);
+
     internal static MethodInfo FindCast(Type type)
     {
         MethodInfo cast = null;
@@ -452,7 +459,8 @@ internal sealed class LevelEditor
                     if (!showForms && ValidateEnemy(context, config, def, out _, out _, out string key) && seen.Add(key))
                         enemies.Add(new Enemy(def, def.name ?? key, key));
                     if (showForms && plugin.HeroFormsEnabled && ValidateFormDefinition(context, config, def, out _, out string formKey, out string formSize) && seenForms.Add(formKey))
-                        forms.Add(new Enemy(def, (def.name ?? formKey) + " [" + formSize + "]", formKey));
+                        forms.Add(new Enemy(def, (def.name ?? formKey) + " [" + formSize + "]", formKey,
+                            Call(def, "get_PlayerControllable") is bool controllable && !controllable));
                 }
                 catch (Exception ex)
                 {
@@ -1080,8 +1088,12 @@ internal sealed class LevelEditor
         {
             float inner = width - 30;
             void Label(float top, string value) => GUI.Label(new Rect(x + 15, y + top, inner, 22), value);
-            Label(91, "Hero forms (experimental) | Disposable local solo only; back up saves.");
             float half = (inner - 6) / 2;
+            if (GUI.Button(new Rect(x + 15, y + 91, half, 23), (startingFormsView ? "" : "* ") + "Live forms") && startingFormsView)
+            { startingFormsView = false; selectedEnemy = null; enemyPage = 0; }
+            if (GUI.Button(new Rect(x + 21 + half, y + 91, half, 23), (startingFormsView ? "* " : "") + "Starting Forms") && !startingFormsView)
+            { startingFormsView = true; selectedEnemy = null; enemyPage = 0; refresh = true; }
+            if (startingFormsView) { DrawStartingForms(x, y, width, height); return; }
             if (GUI.Button(new Rect(x + 15, y + 115, half, 25), "Refresh forms"))
             { refresh = true; selectedEnemy = null; pendingForm = null; }
             if (GUI.Button(new Rect(x + 21 + half, y + 115, half, 25), "Transform hero"))
@@ -1123,6 +1135,59 @@ internal sealed class LevelEditor
             guiErrorLogged = true;
             GUI.Label(new Rect(x + 15, y + 118, width - 30, 24), "Hero Forms unavailable; see BepInEx log.");
         }
+    }
+
+    private void DrawStartingForms(float x, float y, float width, float height)
+    {
+        float inner = width - 30, half = (inner - 6) / 2;
+        void Label(float top, string value) => GUI.Label(new Rect(x + 15, y + top, inner, 22), value);
+        if (!HeroStartingForms.Available) { Label(120, HeroStartingForms.Status); return; }
+        if (GUI.Button(new Rect(x + 15, y + 115, half, 25),
+            "Starting forms: " + (HeroStartingForms.Enabled ? "ON" : "OFF")))
+            HeroStartingForms.SetEnabled(!HeroStartingForms.Enabled);
+        if (GUI.Button(new Rect(x + 21 + half, y + 115, half, 25), "Refresh forms & party"))
+        { refresh = true; selectedEnemy = null; enemyPage = 0; }
+
+        var heroes = HeroStartingForms.Choices();
+        int index = 0;
+        for (int i = 0; i < heroes.Count; i++)
+            if (heroes[i].Key == startingHeroKey) { index = i; break; }
+        if (GUI.Button(new Rect(x + 15, y + 145, 65, 24), "<")) index = Math.Max(0, index - 1);
+        if (GUI.Button(new Rect(x + 15 + inner - 65, y + 145, 65, 24), ">")) index = Math.Min(Math.Max(0, heroes.Count - 1), index + 1);
+        var hero = heroes.Count == 0 ? null : heroes[index];
+        startingHeroKey = hero?.Key;
+        GUI.Label(new Rect(x + 86, y + 145, inner - 142, 24), hero == null ? "Start a local solo adventure to select a hero." :
+            (index + 1) + "/" + heroes.Count + " | " + hero.Name + (hero.Present ? "" : " (saved, not in party)"));
+        Label(172, "Starting form: " + (hero?.Assignment?.FormName ?? "Original hero"));
+        string typed = GUI.TextField(new Rect(x + 15, y + 197, inner, 25), filter, 100);
+        if (typed != filter) { filter = typed; ApplyFilter(); selectedEnemy = null; }
+        var monsters = new List<Enemy>();
+        foreach (var candidate in matches) if (candidate.IsMonster) monsters.Add(candidate);
+        float footer = height - 103;
+        int rows = Math.Max(1, (int)((footer - 253) / 24));
+        int pages = Math.Max(1, (monsters.Count + rows - 1) / rows);
+        enemyPage = Math.Clamp(enemyPage, 0, pages - 1);
+        for (int i = 0; i < rows && enemyPage * rows + i < monsters.Count; i++)
+        {
+            var form = monsters[enemyPage * rows + i];
+            if (GUI.Button(new Rect(x + 15, y + 226 + i * 24, inner, 23), (ReferenceEquals(selectedEnemy, form) ? "* " : "") + form.Name))
+                selectedEnemy = form;
+        }
+        if (monsters.Count == 0) Label(226, "Refresh on a playable board to browse registered monsters.");
+        if (GUI.Button(new Rect(x + 15, y + footer - 25, 65, 24), "<")) enemyPage = Math.Max(0, enemyPage - 1);
+        GUI.Label(new Rect(x + 84, y + footer - 25, inner - 140, 23), (enemyPage + 1) + "/" + pages + " | " + monsters.Count + " monsters");
+        if (GUI.Button(new Rect(x + 15 + inner - 65, y + footer - 25, 65, 24), ">")) enemyPage = Math.Min(pages - 1, enemyPage + 1);
+        if (GUI.Button(new Rect(x + 15, y + footer, half, 25), "Save starting form"))
+        {
+            if (hero != null && hero.Present && snapshot != null && selectedEnemy != null && selectedEnemy.IsMonster && !refresh)
+                HeroStartingForms.Assign(snapshot, hero.Key, selectedEnemy.Definition, Call(selectedEnemy.Definition, "get_PieceTypeId"), selectedEnemy.Name);
+            else HeroStartingForms.ReportSelectionNeeded();
+        }
+        if (GUI.Button(new Rect(x + 21 + half, y + footer, half, 25), "Use original next adventure") && hero != null)
+            HeroStartingForms.ClearChoice(hero.Key);
+        Label(footer + 27, "Selected monster: " + (selectedEnemy?.Name ?? "none"));
+        Label(footer + 49, "Saved per character, across restarts. Applies on next adventure; bosses need space.");
+        Label(height - 28, HeroStartingForms.Status);
     }
 
     private void QueuePan(int dx, int dy)
