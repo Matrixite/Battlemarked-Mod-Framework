@@ -55,6 +55,7 @@ internal static class HeroStartingForms
             if (idCtor == null) throw new InvalidOperationException("Native monster ID constructor unavailable.");
             store = new StartingFormStore(Path.Combine(context.DataDirectory, "starting-forms.json"));
             ctx = context;
+            StartingFormMenu.Attach(context);
             Status = "Choose a saved character and monster for the next adventure.";
         }
         catch (Exception ex)
@@ -66,6 +67,7 @@ internal static class HeroStartingForms
     }
     internal static void Stop()
     {
+        StartingFormMenu.Stop();
         ctx = null; enabled = null; store = null; party.Clear();
         run = new StartingFormRun(); nextTick = DateTime.MinValue;
         Status = "Starting forms not available.";
@@ -132,7 +134,8 @@ internal static class HeroStartingForms
     {
         var result = new List<Choice>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var hero in party)
+        var available = StartingFormMenu.IsOpen ? StartingFormMenu.Heroes : (IReadOnlyList<Choice>)party;
+        foreach (var hero in available)
         {
             result.Add(new Choice { Key = hero.Key, Name = hero.Name, Present = true, Assignment = store?.Get(hero.Key) });
             seen.Add(hero.Key);
@@ -180,6 +183,21 @@ internal static class HeroStartingForms
             store.Set(assignment);
             run.Defer(key);
             Status = "Saved " + name + " for " + selected.Name + " on the next adventure.";
+        }
+        catch (Exception ex) { Report(ex); }
+    }
+
+    // A main-menu selection is just a saved preference. The next verified
+    // local adventure applies it through the original once-per-run worker.
+    internal static void AssignFromMenu(string heroKey, string monsterKey)
+    {
+        if (!Active) return;
+        try
+        {
+            if (!StartingFormMenu.TryReadAssignment(heroKey, monsterKey, out var assignment))
+                throw new InvalidOperationException("Refresh the main-menu heroes and monsters, then select both.");
+            store.Set(assignment);
+            Status = "Saved " + assignment.FormName + " for " + assignment.HeroName + " on the next adventure.";
         }
         catch (Exception ex) { Report(ex); }
     }

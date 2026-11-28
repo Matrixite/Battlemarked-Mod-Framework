@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.39-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.40-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,12 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.40 — Choose Starting Forms on the main menu
+
+Before entering an adventure, open **F10 > Hero Forms > Starting Forms**, with Hero Forms enabled in Mods and House Rules running. The panel reads your locally owned, non-retired saved characters from the current native main-menu character storage and browses registered monsters from the main-menu piece registry. Select a hero with the arrows, choose a monster, press **Save starting form**, repeat for other characters, and enable **Starting forms: ON**. Use **Refresh forms & party** if the main menu has not finished loading its registries. The same assignments can still be edited on a playable local solo board; the old saved choices are compatible without migration.
+
+The menu stores preferences only: no native hero selection screen or saved character is altered. On the first playable board of the next new local solo adventure, the existing native transformation, registry, footprint and deck checks apply. Only monsters available to the currently loaded registry can be offered; when gameplay classification tags are not loaded in the menu, registered living AI definitions are preview candidates and receive full native verification before transforming on a board. The main menu catalog is discarded when the native menu exits. Windows compilation and gameplay acceptance remain pending.
 
 ## v0.6.39 — Starting Forms
 

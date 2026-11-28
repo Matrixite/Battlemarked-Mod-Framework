@@ -1,4 +1,12 @@
-# v0.6.39-alpha validation
+# v0.6.40-alpha validation
+
+## v0.6.40 main-menu Starting Forms
+
+Verified the supplied GameAssembly fingerprint and current global metadata: Jade.Application.AppStateMainMenu.Enter (0x06000396) and Exit (0x06000397) return IEnumerator, and get_MainMenuModel (0x060003A2) returns the real GameView MainMenuModel. Its get_CharacterSheetsStorage (0x0600346B) returns ICharacterSheetsStorage; get_PieceRegistry (0x0600346C) returns PieceRegistry. Concrete CharacterSheetsStorage exposes GetAllCharacterSheets (0x06000043) and DoesCharacterSheetBelongingToLocalPlayer (0x06000046), and User.AccountId is a string. PieceRegistry has pieceDefinitions and GetPieceDefinition (0x06000FED). The menu lifecycle hooks capture/read only that active state, clear catalog entries on exit, and save through the existing per-character preferences file after fresh storage and registry validation. No HUD/board access or transformation requests occur in the main-menu path. Live transformation, starting-form dispatch and authoritative validation are unchanged. If gameplay classification config is absent in the menu, eligible registered AI definitions are previews only and the existing full native form check gates application.
+
+Five new Python source contracts failed before the change and pass afterward. All 90 local Dev Tools/release Python checks pass. Windows game assemblies, dotnet and a live game are not available in this environment; compilation and actual native main-menu asset/character availability are not verified.
+
+Acceptance: start at the main menu without entering an adventure, open F10 > Hero Forms > Starting Forms, refresh, choose two actual saved characters and different monsters, and save with Starting Forms enabled. Restart the game and verify the choices display on the main menu. Start a new disposable local solo adventure with those characters and verify each form/deck appears automatically, including a boss with room; choose a different saved hero of the same class and verify no inheritance. Return to the main menu, edit/clear one choice and begin another adventure. Check that saved assignments made in v0.6.39 remain compatible, that unavailable/retired heroes cannot be newly assigned, that multiplayer does not transform, and that disabled Starting Forms retains preferences without dispatching them. Inspect BepInEx log for "BMF starting forms main menu" or hook binding errors if the catalog is empty.
 
 ## v0.6.39 Starting Forms
 

@@ -21,7 +21,7 @@ internal sealed class LevelEditor
     private readonly List<Enemy> matches = new();
     private readonly List<Enemy> forms = new();
     private bool showForms, startingFormsView;
-    private string startingHeroKey;
+    private string startingHeroKey, menuMonsterKey;
     private SpawnCommand pendingForm;
     private RemovalTarget heroTarget;
     private TileCell[,] cells = new TileCell[WindowSize, WindowSize];
@@ -114,7 +114,7 @@ internal sealed class LevelEditor
     {
         snapshot = null;
         cells = new TileCell[WindowSize, WindowSize];
-        selectedTile = null; selectedEnemy = null; pending = null;
+        selectedTile = null; selectedEnemy = null; menuMonsterKey = null; pending = null;
         pendingRemoval = null; removalTarget = null; mapMode = 0; mapPickRequested = false;
         enemies.Clear(); matches.Clear(); forms.Clear();
         pendingForm = null; heroTarget = null; HeroForms.Cancel();
@@ -152,6 +152,7 @@ internal sealed class LevelEditor
             {
                 Clear();
                 scene = current.handle;
+                if (showForms && StartingFormMenu.IsOpen) startingFormsView = true;
                 refresh = true;
             }
             var command = pending;
@@ -172,6 +173,16 @@ internal sealed class LevelEditor
                 {
                     mapPickRequested = false;
                     PickMapTile();
+                }
+                return;
+            }
+            if (showForms && startingFormsView && StartingFormMenu.IsOpen)
+            {
+                // No board or HUD is required to browse the native main menu.
+                if (refresh || StartingFormMenu.NeedsRefresh)
+                {
+                    refresh = false; menuMonsterKey = null; enemyPage = 0;
+                    StartingFormMenu.Refresh();
                 }
                 return;
             }
@@ -322,12 +333,12 @@ internal sealed class LevelEditor
     // state and registry. Otherwise the game has a ScriptableObject config:
     // resolve it from loaded assets, only if there is exactly one live choice.
     // No asset loading, synthetic tag rules, or selection by asset name.
-    private static UObject ResolveConfig(Context context)
+    internal static UObject ResolveConfig(Context context)
     {
         var type = ConfigType();
         if (!typeof(UObject).IsAssignableFrom(type))
             throw new InvalidOperationException("Unexpected affected-pieces config type.");
-        if (context.Spawner != null && context.Registry != null)
+        if (context?.Spawner != null && context.Registry != null)
         {
             try
             {
@@ -399,10 +410,14 @@ internal sealed class LevelEditor
         return team != null && team.ToString() == "EnemyOfPlayers";
     }
 
-    private static bool ValidateFormDefinition(Context context, UObject config, UObject definition, out object id, out string key, out string formSize)
+    private static bool ValidateFormDefinition(Context context, UObject config, UObject definition, out object id, out string key, out string formSize) =>
+        ValidateFormDefinition(context.Registry, config, definition, false, out id, out key, out formSize);
+
+    private static bool ValidateFormDefinition(Il2CppObjectBase registry, UObject config, UObject definition, bool menuPreview,
+        out object id, out string key, out string formSize)
     {
         id = null; key = formSize = null;
-        if (context.Registry == null || config == null || definition == null) return false;
+        if (registry == null || definition == null || (config == null && !menuPreview)) return false;
         var defType = Load("GameDefinitions", "Jade.GameDefinitions.PieceDefinition");
         var idType = ModelType("PieceTypeId");
         if (!defType.IsInstanceOfType(definition)) return false;
@@ -413,8 +428,14 @@ internal sealed class LevelEditor
         if (Call(definition, "get_Hp") is not int hp || hp <= 0) return false;
         var footprint = HeroForms.FormFootprint(definition, 0f);
         formSize = Get(footprint, "x") + "x" + Get(footprint, "y");
-        if (Require(context.Registry.GetType(), "GetPieceDefinition", false, defType, idType)
-            .Invoke(context.Registry, new[] { id }) is not UObject registered || registered == null || registered != definition) return false;
+        if (Require(registry.GetType(), "GetPieceDefinition", false, defType, idType)
+            .Invoke(registry, new[] { id }) is not UObject registered || registered == null || registered != definition) return false;
+        // Some menu scenes do not load the gameplay tag config. In that
+        // case list only registered, living AI definitions as previews.
+        // The full native creature/health/fit checks still run on the board.
+        if (config == null)
+            return menuPreview && Call(definition, "get_AiBehaviourDefinition") is Il2CppObjectBase ai &&
+                ai.Pointer != IntPtr.Zero && Load("GameDefinitions", "Jade.GameDefinitions.PieceAIBehaviourDefinition").IsInstanceOfType(ai);
         var qualitiesType = Load("GameDefinitions", "Jade.GameDefinitions.PieceQualities");
         var qualities = Constructor(qualitiesType, defType, ConfigType()).Invoke(new object[] { definition, config });
         return Call(qualities, "get_IsNonNpcCreature") is bool creature && creature &&
@@ -424,6 +445,14 @@ internal sealed class LevelEditor
     internal static bool ValidateRegisteredStartingForm(Context context, UObject definition) =>
         Call(definition, "get_PlayerControllable") is bool controllable && !controllable &&
         ValidateFormDefinition(context, ResolveConfig(context), definition, out _, out _, out _);
+
+    internal static bool ValidateMenuStartingForm(Il2CppObjectBase registry, UObject config, UObject definition,
+        out object id, out string key, out string size)
+    {
+        id = null; key = size = null;
+        return definition != null && Call(definition, "get_PlayerControllable") is bool controllable && !controllable &&
+            ValidateFormDefinition(registry, config, definition, true, out id, out key, out size);
+    }
 
     internal static MethodInfo FindCast(Type type)
     {
@@ -1092,7 +1121,7 @@ internal sealed class LevelEditor
             if (GUI.Button(new Rect(x + 15, y + 91, half, 23), (startingFormsView ? "" : "* ") + "Live forms") && startingFormsView)
             { startingFormsView = false; selectedEnemy = null; enemyPage = 0; }
             if (GUI.Button(new Rect(x + 21 + half, y + 91, half, 23), (startingFormsView ? "* " : "") + "Starting Forms") && !startingFormsView)
-            { startingFormsView = true; selectedEnemy = null; enemyPage = 0; refresh = true; }
+            { startingFormsView = true; selectedEnemy = null; menuMonsterKey = null; enemyPage = 0; refresh = true; }
             if (startingFormsView) { DrawStartingForms(x, y, width, height); return; }
             if (GUI.Button(new Rect(x + 15, y + 115, half, 25), "Refresh forms"))
             { refresh = true; selectedEnemy = null; pendingForm = null; }
@@ -1105,7 +1134,8 @@ internal sealed class LevelEditor
             if (snapshot == null)
             {
                 Label(146, status);
-                Label(172, "House rules must be running; start a new local solo campaign.");
+                Label(172, StartingFormMenu.IsOpen ? "Open Starting Forms to choose heroes and monsters before playing." :
+                    "House rules must be running; start a new local solo campaign.");
                 return;
             }
             var typed = GUI.TextField(new Rect(x + 15, y + 145, inner, 25), filter, 100);
@@ -1142,11 +1172,12 @@ internal sealed class LevelEditor
         float inner = width - 30, half = (inner - 6) / 2;
         void Label(float top, string value) => GUI.Label(new Rect(x + 15, y + top, inner, 22), value);
         if (!HeroStartingForms.Available) { Label(120, HeroStartingForms.Status); return; }
+        bool mainMenu = StartingFormMenu.IsOpen;
         if (GUI.Button(new Rect(x + 15, y + 115, half, 25),
             "Starting forms: " + (HeroStartingForms.Enabled ? "ON" : "OFF")))
             HeroStartingForms.SetEnabled(!HeroStartingForms.Enabled);
         if (GUI.Button(new Rect(x + 21 + half, y + 115, half, 25), "Refresh forms & party"))
-        { refresh = true; selectedEnemy = null; enemyPage = 0; }
+        { refresh = true; selectedEnemy = null; menuMonsterKey = null; enemyPage = 0; }
 
         var heroes = HeroStartingForms.Choices();
         int index = 0;
@@ -1156,13 +1187,19 @@ internal sealed class LevelEditor
         if (GUI.Button(new Rect(x + 15 + inner - 65, y + 145, 65, 24), ">")) index = Math.Min(Math.Max(0, heroes.Count - 1), index + 1);
         var hero = heroes.Count == 0 ? null : heroes[index];
         startingHeroKey = hero?.Key;
-        GUI.Label(new Rect(x + 86, y + 145, inner - 142, 24), hero == null ? "Start a local solo adventure to select a hero." :
-            (index + 1) + "/" + heroes.Count + " | " + hero.Name + (hero.Present ? "" : " (saved, not in party)"));
+        GUI.Label(new Rect(x + 86, y + 145, inner - 142, 24), hero == null ? (mainMenu ? "Waiting for local saved heroes; press Refresh." : "Start a local solo adventure to select a hero.") :
+            (index + 1) + "/" + heroes.Count + " | " + hero.Name + (hero.Present ? "" : " (saved, unavailable)"));
         Label(172, "Starting form: " + (hero?.Assignment?.FormName ?? "Original hero"));
         string typed = GUI.TextField(new Rect(x + 15, y + 197, inner, 25), filter, 100);
-        if (typed != filter) { filter = typed; ApplyFilter(); selectedEnemy = null; }
+        if (typed != filter) { filter = typed; ApplyFilter(); selectedEnemy = null; menuMonsterKey = null; }
         var monsters = new List<Enemy>();
-        foreach (var candidate in matches) if (candidate.IsMonster) monsters.Add(candidate);
+        if (mainMenu)
+        {
+            foreach (var candidate in StartingFormMenu.Monsters)
+                if (candidate.Name.Contains(filter, StringComparison.OrdinalIgnoreCase) || candidate.Key.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                    monsters.Add(new Enemy(null, candidate.Name, candidate.Key, true));
+        }
+        else foreach (var candidate in matches) if (candidate.IsMonster) monsters.Add(candidate);
         float footer = height - 103;
         int rows = Math.Max(1, (int)((footer - 253) / 24));
         int pages = Math.Max(1, (monsters.Count + rows - 1) / rows);
@@ -1170,23 +1207,31 @@ internal sealed class LevelEditor
         for (int i = 0; i < rows && enemyPage * rows + i < monsters.Count; i++)
         {
             var form = monsters[enemyPage * rows + i];
-            if (GUI.Button(new Rect(x + 15, y + 226 + i * 24, inner, 23), (ReferenceEquals(selectedEnemy, form) ? "* " : "") + form.Name))
-                selectedEnemy = form;
+            if (GUI.Button(new Rect(x + 15, y + 226 + i * 24, inner, 23), ((mainMenu ? menuMonsterKey == form.Key : ReferenceEquals(selectedEnemy, form)) ? "* " : "") + form.Name))
+            {
+                if (mainMenu) menuMonsterKey = form.Key;
+                else selectedEnemy = form;
+            }
         }
-        if (monsters.Count == 0) Label(226, "Refresh on a playable board to browse registered monsters.");
+        if (monsters.Count == 0) Label(226, mainMenu || snapshot == null ? StartingFormMenu.Status :
+            "Refresh on a playable board to browse registered monsters.");
         if (GUI.Button(new Rect(x + 15, y + footer - 25, 65, 24), "<")) enemyPage = Math.Max(0, enemyPage - 1);
         GUI.Label(new Rect(x + 84, y + footer - 25, inner - 140, 23), (enemyPage + 1) + "/" + pages + " | " + monsters.Count + " monsters");
         if (GUI.Button(new Rect(x + 15 + inner - 65, y + footer - 25, 65, 24), ">")) enemyPage = Math.Min(pages - 1, enemyPage + 1);
         if (GUI.Button(new Rect(x + 15, y + footer, half, 25), "Save starting form"))
         {
-            if (hero != null && hero.Present && snapshot != null && selectedEnemy != null && selectedEnemy.IsMonster && !refresh)
+            if (mainMenu && hero != null && hero.Present && menuMonsterKey != null && !refresh)
+                HeroStartingForms.AssignFromMenu(hero.Key, menuMonsterKey);
+            else if (!mainMenu && hero != null && hero.Present && snapshot != null && selectedEnemy != null && selectedEnemy.IsMonster && !refresh)
                 HeroStartingForms.Assign(snapshot, hero.Key, selectedEnemy.Definition, Call(selectedEnemy.Definition, "get_PieceTypeId"), selectedEnemy.Name);
             else HeroStartingForms.ReportSelectionNeeded();
         }
         if (GUI.Button(new Rect(x + 21 + half, y + footer, half, 25), "Use original next adventure") && hero != null)
             HeroStartingForms.ClearChoice(hero.Key);
-        Label(footer + 27, "Selected monster: " + (selectedEnemy?.Name ?? "none"));
-        Label(footer + 49, "Saved per character, across restarts. Applies on next adventure; bosses need space.");
+        string monsterName = mainMenu ? StartingFormMenu.FindMonster(menuMonsterKey)?.Name : selectedEnemy?.Name;
+        Label(footer + 27, "Selected monster: " + (monsterName ?? "none"));
+        Label(footer + 49, mainMenu ? "Main menu: saved per character; monster validated at adventure start." :
+            "Saved per character, across restarts. Applies on next adventure; bosses need space.");
         Label(height - 28, HeroStartingForms.Status);
     }
 
