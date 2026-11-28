@@ -2,6 +2,7 @@ using System.Reflection;
 using HarmonyLib;
 using Il2CppInterop.Runtime.InteropTypes;
 using IEnumerator = Il2CppSystem.Collections.IEnumerator;
+using UObject = UnityEngine.Object;
 
 namespace Battlemarked.ModFramework;
 
@@ -22,7 +23,9 @@ internal static class EnemyMover
     private sealed class Command
     {
         internal LevelEditor.Context Context;
-        internal string Token, Session, TypeKey, Level;
+        internal string Token, Session, TypeKey, Level, StartingKey, FormKey;
+        internal long StartingEpoch;
+        internal UObject Definition;
         internal ulong Host;
         internal int Id, X, Y, DestX, DestY;
         internal DateTime Expires;
@@ -35,8 +38,12 @@ internal static class EnemyMover
     private static Type Definition(string name) => Load("GameDefinitions", "Jade.GameDefinitions." + name);
     private static object Get(object obj, string name) => DebugWorkspace.ReadMember(obj, name);
     private static object Call(object obj, string name) => DebugWorkspace.Call(obj, name);
-    private static bool Active => ctx != null && Plugin.Instance?.VerifiedGame == true &&
-        Plugin.Instance?.DeveloperModeEnabled == true && Environment.CurrentManagedThreadId == mainThread;
+    private static bool CaptureAllowed => ctx != null && Plugin.Instance?.VerifiedGame == true &&
+        Environment.CurrentManagedThreadId == mainThread;
+    private static bool Active => CaptureAllowed && Plugin.Instance?.DeveloperModeEnabled == true;
+    internal static bool StartingReady => CaptureAllowed && forceMove != null &&
+        Plugin.Instance?.HeroFormsEnabled == true && HeroStartingForms.Enabled;
+    private static bool Allowed(Command command) => command.StartingKey == null ? Active : StartingReady;
     private static MethodInfo Exact(Type type, string name, bool isStatic, Type result, params Type[] args)
     {
         var method = type.GetMethod(name, BindingFlags.Public | BindingFlags.NonPublic |
@@ -127,15 +134,23 @@ internal static class EnemyMover
         {
             if (pending != null && DateTime.UtcNow > pending.Expires)
             {
-                Cancel();
-                Status = "Move request timed out; select the enemy again.";
+                bool starting = pending.StartingKey != null;
+                pending = null;
+                Status = starting ? "Starting hero relocation request timed out." : "Move request timed out; select the enemy again.";
                 ctx?.Log.LogWarning("BMF enemy move: " + Status);
             }
             return pending != null;
         }
     }
-    internal static void Cancel() { pending = null; }
-    internal static void Stop() { Cancel(); ctx = null; forceMove = null; makeContext = null; coroutineMember = null; }
+    // Closing the level editor or turning Developer mode off cancels only
+    // manual enemy moves. Starting Forms owns its separate automatic request.
+    internal static void Cancel()
+    {
+        if (pending?.StartingKey != null && StartingReady) return;
+        pending = null;
+    }
+    internal static void CancelStarting() { if (pending?.StartingKey != null) pending = null; }
+    internal static void Stop() { pending = null; ctx = null; forceMove = null; makeContext = null; coroutineMember = null; }
 
     private static int Id(object piece) => (int)Call(Get(piece, "pieceId"), "get_Id");
     private static string TypeKey(object piece)
@@ -216,17 +231,71 @@ internal static class EnemyMover
         var command = new Command { Context = live, Token = "bmf-enemy-move-" + Guid.NewGuid().ToString("N"),
             Session = Session(live.State), Host = (ulong)Call(Get(live.State, "hostPlayerId"), "get_Id"), Level = Level(live.Board),
             Id = Id(piece), TypeKey = TypeKey(piece), X = x, Y = y, DestX = destX, DestY = destY, Expires = DateTime.UtcNow.AddSeconds(15) };
+        return Submit(live, command);
+    }
+
+    internal static string QueueStarting(LevelEditor.Context context, object piece, UObject definition,
+        string key, string formKey, int destX, int destY)
+    {
+        if (!StartingReady || Waiting) throw new InvalidOperationException("Starting hero movement not ready.");
+        if (!HouseRules.TryGetHeroFormsContext(out var live, out var reason) || !context.SameSession(live))
+            throw new InvalidOperationException("Starting move rejected: " + reason);
+        var pos = Get(piece, "gridPos");
+        var command = new Command { Context = live, Token = "bmf-starting-move-" + Guid.NewGuid().ToString("N"),
+            Session = Session(live.State), Host = (ulong)Call(Get(live.State, "hostPlayerId"), "get_Id"), Level = Level(live.Board),
+            Id = Id(piece), TypeKey = TypeKey(piece), X = (int)Get(pos, "x"), Y = (int)Get(pos, "y"),
+            DestX = destX, DestY = destY, Expires = DateTime.UtcNow.AddSeconds(15),
+            StartingKey = key, FormKey = formKey, StartingEpoch = HeroStartingForms.Epoch, Definition = definition };
+        ValidateStartingSource(live, live.State, live.Board, piece, command);
+        if (!SameNative(PieceAt(live.Board, Point(command.X, command.Y)), piece))
+            throw new InvalidOperationException("Starting hero changed before relocation.");
+        ValidateStartingDestination(live.Board, piece, command);
+        return Submit(live, command);
+    }
+
+    private static bool CurrentContext(Command command, out LevelEditor.Context live, out string reason) =>
+        command.StartingKey == null ? HouseRules.TryGetLevelEditorContext(out live, out reason) :
+            HouseRules.TryGetHeroFormsContext(out live, out reason);
+
+    private static void ValidateStartingSource(LevelEditor.Context live, object state, object board, object piece, Command command)
+    {
+        if (!StartingReady || !HeroStartingForms.AuthorizesRelocation(command.StartingKey, command.FormKey, command.StartingEpoch, state, piece) ||
+            !HouseRules.TryValidateLocalHero(live, piece, out _) || Id(piece) != command.Id || TypeKey(piece) != command.TypeKey)
+            throw new InvalidOperationException("Starting hero or assigned form changed.");
+        HeroForms.ValidatePiece(state, board, piece);
+        if (command.Definition == null || HeroFormPersistence.Key(Call(command.Definition, "get_PieceTypeId")) != command.FormKey ||
+            !LevelEditor.ValidateRegisteredStartingForm(live, command.Definition))
+            throw new InvalidOperationException("Starting monster definition changed.");
+        var pos = Get(piece, "gridPos");
+        if ((int)Get(pos, "x") != command.X || (int)Get(pos, "y") != command.Y)
+            throw new InvalidOperationException("Starting hero moved before relocation.");
+    }
+
+    private static void ValidateStartingDestination(object board, object piece, Command command)
+    {
+        // The authoritative board must independently identify the same
+        // nearest reachable space, with the full monster footprint available.
+        if (!StartingFormRelocation.TryFind(board, piece, command.Definition, out int x, out int y) ||
+            x != command.DestX || y != command.DestY)
+            throw new InvalidOperationException("Starting relocation destination no longer fits or is not reachable.");
+        ValidateDestination(board, x, y);
+    }
+
+    private static string Submit(LevelEditor.Context live, Command command)
+    {
         if (!MatchState(live.State, command)) throw new InvalidOperationException("Session identity unavailable.");
+        if (Call(live.Room, "get_HasRequestsInQueue") is not bool busy || busy)
+            throw new InvalidOperationException("Local request queue busy; retry when idle.");
         var message = commandType.GetConstructor(new[] { typeof(string) })?.Invoke(new object[] { command.Token });
         var request = LevelEditor.CheckedRequest(message, commandType, requestType);
         var send = Exact(Load("Jade.Networking", "Jade.Networking.LocalNetworkRoom"), "Send", false, typeof(void), requestType);
-        if (!HouseRules.TryGetLevelEditorContext(out var final, out reason) || !live.SameSession(final))
+        if (!Allowed(command) || !CurrentContext(command, out var final, out _) || !live.SameSession(final))
             throw new InvalidOperationException("Session changed before move dispatch.");
         pending = command;
-        Status = "Enemy move submitted; waiting for game.";
+        Status = command.StartingKey == null ? "Enemy move submitted; waiting for game." : "Starting hero move submitted; waiting for game.";
         try { send.Invoke(live.Room, new[] { request }); }
-        catch { Cancel(); throw; }
-        ctx.Log.LogInfo("BMF enemy move request submitted: " + command.TypeKey + " to " + destX + "," + destY);
+        catch { pending = null; throw; }
+        ctx.Log.LogInfo("BMF native move request submitted: " + command.TypeKey + " to " + command.DestX + "," + command.DestY);
         return Status;
     }
 
@@ -244,7 +313,7 @@ internal static class EnemyMover
     private static void CaptureRunner(object __instance, object __0)
     {
         var command = pending;
-        if (command == null || !Active) return;
+        if (command == null || !Allowed(command)) return;
         try
         {
             if (!Matches(__0, command) || DateTime.UtcNow > command.Expires) return;
@@ -273,29 +342,38 @@ internal static class EnemyMover
     private static bool HandleCommand(object __instance, object __0, ref IEnumerator __result)
     {
         var command = pending;
-        if (command == null || !Active) return true;
+        if (command == null || !Allowed(command)) return true;
         try
         {
             if (!Matches(__0, command)) return true;
             pending = null; // Consume exactly once before any native action.
             if (DateTime.UtcNow > command.Expires ||
-                !HouseRules.TryGetLevelEditorContext(out var live, out _) || !command.Context.SameSession(live) ||
+                !CurrentContext(command, out var live, out _) || !command.Context.SameSession(live) ||
                 !MatchState(live.State, command) || command.State == null || command.Helper == null ||
                 !SameNative(command.Handler, __instance) || !MatchState(command.State, command) ||
-                !SameNative(Get(command.Helper, "gameState"), command.State))
+                !SameNative(Get(command.Helper, "gameState"), command.State) ||
+                (command.StartingKey != null && !HeroFormPersistence.MatchesStage(command.State, live.State)))
                 throw new InvalidOperationException("Native move request does not match the confirmed solo session.");
             var board = Get(command.State, "board");
             if (Call(board, "get_IsLoaded") is not bool loaded || !loaded)
                 throw new InvalidOperationException("Native board not loaded.");
             var piece = PieceAt(board, Point(command.X, command.Y));
-            ValidateEnemy(piece, command.X, command.Y);
-            if (Id(piece) != command.Id || TypeKey(piece) != command.TypeKey)
-                throw new InvalidOperationException("Enemy identity changed before move.");
-            ValidateDestination(board, command.DestX, command.DestY);
+            if (command.StartingKey != null)
+            {
+                ValidateStartingSource(live, command.State, board, piece, command);
+                ValidateStartingDestination(board, piece, command);
+            }
+            else
+            {
+                ValidateEnemy(piece, command.X, command.Y);
+                if (Id(piece) != command.Id || TypeKey(piece) != command.TypeKey)
+                    throw new InvalidOperationException("Enemy identity changed before move.");
+                ValidateDestination(board, command.DestX, command.DestY);
+            }
             var destination = Point(command.DestX, command.DestY);
             var action = makeContext.Invoke(null, new[] { piece, destination });
             var animation = Activator.CreateInstance(animationType);
-            var hierarchy = Activator.CreateInstance(hierarchyType, new object[] { "bmf-enemy-move" });
+            var hierarchy = Activator.CreateInstance(hierarchyType, new object[] { command.StartingKey == null ? "bmf-enemy-move" : "bmf-starting-move" });
             // Native simulation retains the piece ID and operates its usual
             // movement/interaction/view events. No path or correction to a
             // different tile is requested.
@@ -303,7 +381,8 @@ internal static class EnemyMover
             var coroutine = coroutineMember is PropertyInfo property ? property.GetValue(result) : ((FieldInfo)coroutineMember).GetValue(result);
             __result = Cast(coroutine, typeof(IEnumerator)) as IEnumerator;
             if (__result == null) throw new InvalidOperationException("Native move coroutine unavailable.");
-            Status = "Native move accepted; check the enemy at the destination.";
+            Status = command.StartingKey == null ? "Native move accepted; check the enemy at the destination." :
+                "Native starting hero move accepted; waiting for arrival.";
             ctx.Log.LogInfo("BMF enemy move: native force movement coroutine returned.");
             return false;
         }

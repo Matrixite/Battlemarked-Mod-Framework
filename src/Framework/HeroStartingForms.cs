@@ -18,6 +18,7 @@ internal static class HeroStartingForms
     private static Type pieceType, formIdType, definitionType;
     private static ConstructorInfo idCtor;
     private static readonly List<Choice> party = new();
+    private static Relocation relocation;
     internal static string Status { get; private set; } = "Starting forms not available.";
     internal static bool Enabled => enabled?.Value == true;
     internal static bool Available => store != null;
@@ -28,6 +29,14 @@ internal static class HeroStartingForms
         internal string Key, Name;
         internal bool Present;
         internal StartingFormAssignment Assignment;
+    }
+    private sealed class Relocation
+    {
+        internal LevelEditor.Context Context;
+        internal string Key, FormKey;
+        internal long Epoch;
+        internal int PieceId, DestX, DestY;
+        internal DateTime Expires;
     }
     private sealed class Hero
     {
@@ -68,6 +77,7 @@ internal static class HeroStartingForms
     internal static void Stop()
     {
         StartingFormMenu.Stop();
+        CancelRelocation();
         ctx = null; enabled = null; store = null; party.Clear();
         run = new StartingFormRun(); nextTick = DateTime.MinValue;
         Status = "Starting forms not available.";
@@ -158,6 +168,7 @@ internal static class HeroStartingForms
                 foreach (var choice in store.List()) run.Defer(choice.CharacterKey);
             }
             enabled.Value = value;
+            if (!value) CancelRelocation();
             ctx.Config.Save();
             Status = value ? "Starting forms enabled for your next adventure." : "Starting forms off; saved choices kept.";
         }
@@ -246,6 +257,9 @@ internal static class HeroStartingForms
         return Identify(state, piece)?.Key == key;
     }
 
+    internal static bool AuthorizesRelocation(string key, string destination, long epoch, object state, object piece) =>
+        run.CanApply(key) && Authorizes(key, destination, epoch, state, piece);
+
     internal static bool PreferStartingForm(LevelEditor.Context live, object piece)
     {
         if (!Active || !Enabled || !Observe(live.State)) return false;
@@ -253,20 +267,62 @@ internal static class HeroStartingForms
         return choice != null && choice.Assignment != null && run.HasPriority(choice.Key);
     }
 
+    private static int PieceId(object piece) => (int)Call(Get(piece, "pieceId"), "get_Id");
+
+    private static void CancelRelocation()
+    {
+        EnemyMover.CancelStarting();
+        relocation = null;
+    }
+
+    private static bool RelocationCurrent(LevelEditor.Context live) =>
+        relocation != null && Enabled && run.FirstBoard && relocation.Epoch == run.Epoch &&
+        relocation.Context.SameSession(live) && run.CanApply(relocation.Key) &&
+        store.Get(relocation.Key)?.FormKey == relocation.FormKey;
+
+    // Do not queue the transform just because the native move was accepted.
+    // Wait for the exact original piece to arrive on the live board, then
+    // re-run normal fit/identity checks before submitting the transformation.
+    private static bool ObserveRelocation(List<Hero> heroes)
+    {
+        if (relocation == null) return true;
+        for (int i = 0; i < heroes.Count; i++)
+        {
+            var hero = heroes[i];
+            if (hero.Choice.Key != relocation.Key || PieceId(hero.Piece) != relocation.PieceId) continue;
+            var position = Get(hero.Piece, "gridPos");
+            if ((int)Get(position, "x") == relocation.DestX && (int)Get(position, "y") == relocation.DestY)
+            {
+                Status = "Starting hero reached a suitable tile; checking its form.";
+                CancelRelocation();
+                // Transform this hero first before another automatic change
+                // can occupy its newly available footprint.
+                heroes.RemoveAt(i); heroes.Insert(0, hero);
+                return true;
+            }
+        }
+        if (DateTime.UtcNow < relocation.Expires) return false;
+        Status = "Starting hero move was not confirmed; waiting for space.";
+        CancelRelocation();
+        return true;
+    }
+
     internal static void Tick()
     {
-        if (!Active) { party.Clear(); return; }
+        if (!Active) { party.Clear(); CancelRelocation(); return; }
         if (DateTime.UtcNow < nextTick) return;
         nextTick = DateTime.UtcNow.AddMilliseconds(500);
         try
         {
             party.Clear();
-            if (!HouseRules.TryGetHeroFormsContext(out var live, out _)) return;
-            if (!Observe(live.State)) return;
+            if (!HouseRules.TryGetHeroFormsContext(out var live, out _) || !Observe(live.State))
+            { CancelRelocation(); return; }
+            if (relocation != null && !RelocationCurrent(live)) CancelRelocation();
             var heroes = ReadParty(live);
             foreach (var hero in heroes) party.Add(hero.Choice);
-            if (!Enabled || !run.FirstBoard || HeroForms.Waiting ||
+            if (!Enabled || !run.FirstBoard || HeroForms.Waiting || EnemyMover.Waiting ||
                 Call(live.Room, "get_HasRequestsInQueue") is not bool busy || busy) return;
+            if (!ObserveRelocation(heroes)) return;
             foreach (var hero in heroes)
             {
                 var choice = hero.Choice;
@@ -274,14 +330,35 @@ internal static class HeroStartingForms
                 if (assignment == null || !run.CanApply(choice.Key)) continue;
                 if (Get(hero.Piece, "isTransformedPiece") is not bool transformed || transformed)
                 { run.MarkAttempt(choice.Key); continue; }
-                UObject definition;
-                object id;
+                UObject definition = null;
+                object id = null;
                 try
                 {
                     HeroForms.ValidatePiece(live.State, live.Board, hero.Piece);
                     definition = Resolve(live, assignment, out id);
                     if (definition == null) { Status = "Waiting for registered " + assignment.FormName + "."; continue; }
                     HeroForms.ValidateFormFit(live.Board, hero.Piece, definition);
+                }
+                catch (HeroFormSpaceException ex)
+                {
+                    // Relocate only for a proven footprint failure, never
+                    // to work around a dead hero, invalid registry or turn.
+                    if (definition != null && run.CanRelocate(choice.Key) && EnemyMover.StartingReady &&
+                        StartingFormRelocation.TryFind(live.Board, hero.Piece, definition, out int x, out int y))
+                    {
+                        var move = new Relocation { Context = live, Key = choice.Key, FormKey = assignment.FormKey,
+                            Epoch = run.Epoch, PieceId = PieceId(hero.Piece), DestX = x, DestY = y,
+                            Expires = DateTime.UtcNow.AddSeconds(25) };
+                        EnemyMover.QueueStarting(live, hero.Piece, definition, choice.Key, assignment.FormKey, x, y);
+                        run.MarkRelocation(choice.Key);
+                        relocation = move;
+                        Status = "Moving " + choice.Name + " to " + x + "," + y + " for " + assignment.FormName + ".";
+                        ctx.Log.LogInfo("BMF starting forms: " + Status);
+                        return;
+                    }
+                    Status = "Starting form waiting: " + ex.Message + " No nearby reachable space yet.";
+                    nextTick = DateTime.UtcNow.AddSeconds(1);
+                    continue;
                 }
                 catch (Exception ex) { Status = "Starting form waiting: " + ex.GetBaseException().Message; continue; }
                 HeroForms.Queue(live, hero.Piece, definition, id, automatic: true, startingKey: choice.Key);

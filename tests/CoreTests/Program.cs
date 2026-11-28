@@ -528,3 +528,40 @@ Check(!startingRun.FirstBoard && !startingRun.CanApply(startingA), "new level of
 startingRun.Observe("session-b", "campaign", "scenario", "run-b", "step1", 0);
 Check(startingRun.CanApply(startingA) && startingRun.CanApply(startingB), "new run resets per-hero attempts and deferrals");
 Console.WriteLine("PASS: persistent per-character starting forms and once-per-adventure gate.");
+
+// The relocation search visits reachable free tiles in shortest-path order.
+var relocationGrid = new TestStartingFormTerrain();
+relocationGrid.Free.UnionWith(new[] { (0,0), (1,0), (2,0), (0,1), (0,2), (1,2) });
+relocationGrid.Fits.UnionWith(new[] { (2,0), (1,2) });
+Check(StartingFormPlacement.TryFind(relocationGrid, 0, 0, out int moveX, out int moveY) && moveX == 2 && moveY == 0,
+    "nearest reachable full footprint chosen");
+relocationGrid.Walls.Add((0,0,1,0));
+Check(StartingFormPlacement.TryFind(relocationGrid, 0, 0, out moveX, out moveY) && moveX == 1 && moveY == 2,
+    "nearer space behind a wall is not chosen");
+relocationGrid.Free.Remove((0,1));
+Check(!StartingFormPlacement.TryFind(relocationGrid, 0, 0, out moveX, out moveY),
+    "no teleport through blocked or occupied cells");
+relocationGrid.Fits.Add((0,0));
+Check(!StartingFormPlacement.TryFind(relocationGrid, 0, 0, out moveX, out moveY), "already fitting hero never moves");
+var distantGrid = new TestStartingFormTerrain();
+for (int i = 0; i <= StartingFormPlacement.MaxDistance + 1; i++) distantGrid.Free.Add((i,0));
+distantGrid.Fits.Add((StartingFormPlacement.MaxDistance + 1,0));
+Check(!StartingFormPlacement.TryFind(distantGrid, 0, 0, out moveX, out moveY), "search radius bounded");
+Check(!StartingFormPlacement.TryFind(distantGrid, int.MaxValue, int.MinValue, out moveX, out moveY), "coordinates never overflow");
+Check(startingRun.CanRelocate(startingA), "new adventure initially allows relocation");
+startingRun.MarkRelocation(startingA);
+Check(!startingRun.CanRelocate(startingA) && startingRun.CanApply(startingA), "only one relocation but transformation still allowed");
+startingRun.Observe("session-c", "campaign", "scenario", "run-c", "step1", 0);
+Check(startingRun.CanRelocate(startingA), "subsequent new adventure permits relocation");
+Console.WriteLine("PASS: nearest reachable starting-form placement and one-move budget.");
+
+internal sealed class TestStartingFormTerrain : IStartingFormTerrain
+{
+    internal readonly HashSet<(int,int)> Free = new();
+    internal readonly HashSet<(int,int)> Fits = new();
+    internal readonly HashSet<(int,int,int,int)> Walls = new();
+    public bool CanStep(int fromX, int fromY, int toX, int toY) =>
+        Free.Contains((fromX,fromY)) && Free.Contains((toX,toY)) &&
+        !Walls.Contains((fromX,fromY,toX,toY)) && !Walls.Contains((toX,toY,fromX,fromY));
+    public bool FitsForm(int x, int y) => Fits.Contains((x,y));
+}

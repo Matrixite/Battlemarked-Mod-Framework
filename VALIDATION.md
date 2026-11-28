@@ -1,4 +1,12 @@
-# v0.6.40-alpha validation
+# v0.6.41-alpha validation
+
+## v0.6.41 blocked Starting Forms
+
+Verified the supplied GameAssembly fingerprint and metadata: TileSetHelpers.TileExist(TileSet, int, int) (0x060005D3), GetTile(TileSet, int, int) (0x060005D9), WallInTheWayOfMove(TileSet, IntPoint2D, IntPoint2D) (0x060005EF), BoardHelpers.TryGetPieceAtPoint (0x06000075), IsWalkable(Board, IntPoint2D) (0x06000097), CanSpawnPieceOnPosition (0x06000099) and CanSpawnPieceInArea (0x0600009A). The new bounded breadth-first search uses the native terrain and occupancy checks and the existing exact native oriented form footprint/spawn rectangle; only a genuine footprint rejection initiates relocation. The isolated starting movement command verifies the saved character, monster, run, phase, local hero, native state, source piece and nearest destination again before the existing ForceMovePiece coroutine runs. Arrival must be observed on the live board before normal transformation can be requested; the per-character run budget prevents repeated automatic relocations. No save data or native transformation record is rewritten. Disabling Starting Forms or exiting its first board cancels outstanding starting requests.
+
+Four new Python source regression checks failed before implementation and pass afterward. All 94 local Dev Tools/release Python checks pass. The .NET core suite includes nearest fit, wall detour, occupancy, no movement when already fitting, bounded search, overflow and per-adventure budget checks; dotnet, current Windows interop SDK and live gameplay are unavailable here, so compilation and actual native motion/arrival have not been verified.
+
+Acceptance: select two saved heroes and large monsters in F10 > Hero Forms > Starting Forms. Start a disposable local solo adventure where one hero spawns too close to a blocked tile or wall and another already has room. With F10 closed and Developer mode off, verify the first hero moves to the nearest accessible space and transforms with the correct cards, and the second does not needlessly move. Repeat with both heroes blocked, a rotated rectangular creature, obstruction by another party member, and no valid reachable destination within ten steps. Check that each hero moves at most once per run, no inaccessible destination is selected, no transformation happens before a confirmed arrival and subsequent fit check, and disabling the option or changing boards cancels stale requests. Verify manual form changes and level carry-over retain their prior behavior, and multiplayer and unverified sessions cannot dispatch. Inspect the BepInEx log for "BMF starting forms" and "BMF native move request submitted" if a starting hero stays unchanged.
 
 ## v0.6.40 main-menu Starting Forms
 

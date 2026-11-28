@@ -1231,7 +1231,7 @@ internal sealed class LevelEditor
         string monsterName = mainMenu ? StartingFormMenu.FindMonster(menuMonsterKey)?.Name : selectedEnemy?.Name;
         Label(footer + 27, "Selected monster: " + (monsterName ?? "none"));
         Label(footer + 49, mainMenu ? "Main menu: saved per character; monster validated at adventure start." :
-            "Saved per character, across restarts. Applies on next adventure; bosses need space.");
+            "Saved per character. Blocked starting forms search for nearby space.");
         Label(height - 28, HeroStartingForms.Status);
     }
 

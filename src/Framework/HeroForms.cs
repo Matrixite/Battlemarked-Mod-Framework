@@ -7,6 +7,11 @@ namespace Battlemarked.ModFramework;
 
 // Only a confirmed local request can invoke the simulation's native reversible
 // transformation. Never start a simulation coroutine from the presentation UI.
+internal sealed class HeroFormSpaceException : InvalidOperationException
+{
+    internal HeroFormSpaceException(string message) : base(message) { }
+}
+
 internal static class HeroForms
 {
     private static ModuleContext ctx;
@@ -245,7 +250,7 @@ internal static class HeroForms
         // only the hero that the transformation is about to replace.
         if (Exact(Model("BoardHelpers"), "CanSpawnPieceInArea", true, typeof(bool), Model("Board"), rect, Model("PieceId"))
             .Invoke(null, new[] { board, area, Get(piece, "pieceId") }) is not bool fits || !fits)
-            throw new InvalidOperationException("No room for " + Get(footprint, "x") + "x" + Get(footprint, "y") +
+            throw new HeroFormSpaceException("No room for " + Get(footprint, "x") + "x" + Get(footprint, "y") +
                 " form; move your hero to an open area.");
     }
 
@@ -258,7 +263,7 @@ internal static class HeroForms
                 pending = null; Status = "Native transformation request not observed (timed out).";
                 ctx?.Log.LogWarning("BMF hero forms: " + Status);
             }
-            return pending != null || HeroFormCards.Waiting;
+            return pending != null || HeroFormCards.Waiting || EnemyMover.Waiting;
         }
     }
 

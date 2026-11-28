@@ -1,4 +1,4 @@
-# Battlemarked Mod Framework (BMF) — v0.6.40-alpha
+# Battlemarked Mod Framework (BMF) — v0.6.41-alpha
 
 ## First stable release automation
 
@@ -7,6 +7,12 @@ Development updates continue through the existing Mod Manager; no alpha release 
 The **Publish BMF v1.0.0** workflow checks the exact pushed commit, validates these declarations, and runs the release automation tests and .NET 8 core tests. Only a passing eligible commit can create the `v1.0.0` tag and first stable [GitHub Release](https://github.com/Matrixite/Battlemarked-Mod-Framework/releases). The release contains `Battlemarked-Mod-Framework-v1.0.0.zip` (the versioned source installer, including `Install-BMF.cmd`) and its `.sha256` checksum. The usual local BepInEx and SDK prerequisites still apply; no game assemblies or precompiled DLLs are included.
 
 The workflow never moves an existing tag or replaces an existing release. If publication fails, inspect the Actions logs and retry the failed run for the same commit; an existing draft or conflicting tag requires review. GitHub Actions must remain enabled with permission for the publication job to create repository tags and releases. Future stable versions beyond 1.0.0 are not covered by this first-release workflow.
+
+## v0.6.41 — Automatic Starting Form relocation
+
+If a selected starting monster cannot fit at its hero's starting position (for example, a boss near a wall or another piece), BMF finds the nearest reachable unoccupied tile within ten cardinal steps where the entire oriented footprint can fit. It moves the original hero using the native simulation movement request, waits for the exact hero to arrive, then checks the space again and applies the selected form through the existing transformation and card paths. A hero that already fits stays put. Each saved character can receive one automatic relocation request per adventure. If space is unavailable, the hero stays unchanged and the usual starting-form worker can retry the fit check on the first board; it will not relocate repeatedly.
+
+This works with Starting Forms enabled without Developer mode or the F10 menu open. It is restricted to verified local solo play and the initial adventure board; manual Hero Forms, level carry-over and Level Editor enemy moves retain their existing placement rules. The local Python regressions pass; Windows compilation and in-game acceptance remain pending.
 
 ## v0.6.40 — Choose Starting Forms on the main menu
 

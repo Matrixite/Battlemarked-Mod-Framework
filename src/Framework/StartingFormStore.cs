@@ -102,6 +102,7 @@ internal sealed class StartingFormRun
     private int firstIndex;
     private readonly HashSet<string> attempted = new(StringComparer.Ordinal);
     private readonly HashSet<string> deferred = new(StringComparer.Ordinal);
+    private readonly HashSet<string> relocated = new(StringComparer.Ordinal);
     internal bool FirstBoard { get; private set; }
     internal long Epoch { get; private set; }
     internal bool Observe(string session, string campaign, string scenario, string run, string step, int index)
@@ -115,7 +116,7 @@ internal sealed class StartingFormRun
         {
             this.campaign = campaign; this.scenario = scenario; this.run = run;
             firstStep = step; firstIndex = index; FirstBoard = true;
-            attempted.Clear(); deferred.Clear(); Epoch++;
+            attempted.Clear(); deferred.Clear(); relocated.Clear(); Epoch++;
         }
         else if (firstIndex != index || firstStep != step) FirstBoard = false;
         this.session = session;
@@ -125,6 +126,8 @@ internal sealed class StartingFormRun
     internal bool MatchesFirstBoard(string session, string campaign, string scenario, string run, string step, int index) =>
         FirstBoard && this.session == session && this.campaign == campaign && this.scenario == scenario &&
         (this.run == run || string.IsNullOrWhiteSpace(this.run)) && firstStep == step && firstIndex == index;
+    internal bool CanRelocate(string key) => CanApply(key) && !relocated.Contains(key);
+    internal void MarkRelocation(string key) => relocated.Add(key);
     internal void MarkAttempt(string key) => attempted.Add(key);
     internal void Defer(string key) { attempted.Add(key); deferred.Add(key); }
     internal bool CanApply(string key) => FirstBoard && !attempted.Contains(key);
